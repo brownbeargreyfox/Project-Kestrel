@@ -34,7 +34,7 @@
       "@core/*": ["src/core/*"],
       "@components/*": ["src/components/*"],
       "@plugins/*": ["src/plugins/*"],
-      "@types/*": ["src/types/*"],
+      "@types/*": ["src/Types/*"],
       "@store/*": ["src/store/*"],
       "@utils/*": ["src/utils/*"]
     },
