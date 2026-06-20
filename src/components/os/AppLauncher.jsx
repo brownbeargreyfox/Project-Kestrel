@@ -26,30 +26,38 @@ export default function AppLauncher() {
   const apps = Object.values(AppRegistry || {});
 
   return (
-    <div className="fixed inset-0 z-[1100] bg-black/40" onClick={beginClose}>
+    <div
+      className="fixed inset-0 z-[1100] bg-black/40"
+      onClick={beginClose}
+      data-testid="app-launcher-overlay"
+    >
       <aside
         role="dialog"
         aria-modal="true"
+        aria-labelledby="app-launcher-title"
+        data-testid="app-launcher-panel"
         onClick={(e) => e.stopPropagation()}
         className={`fixed top-16 right-3 bottom-12 w-[520px]
                     rounded-xl border border-neutral-700 bg-neutral-850/95 backdrop-blur
                     p-3 shadow-xl overflow-auto
-                    transform-gpu transition-transform duration-200 ease-out
+                    transform-gpu transition-transform duration-200 ease-out motion-reduce:transition-none
                     ${panelIn ? 'translate-x-0' : 'translate-x-full'}`}
       >
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold opacity-90">Apps</h3>
+          <h3 id="app-launcher-title" className="text-sm font-semibold opacity-90">Apps</h3>
           <button
             onClick={beginClose}
             className="px-2 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700 border border-neutral-700"
             title="Close"
+            aria-label="Close app launcher"
+            data-testid="app-launcher-close"
           >
             Close
           </button>
         </div>
 
         {/* Two columns */}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3" data-testid="app-launcher-grid">
           {apps.map((m) => {
             const Icon = m.icon;
             return (
@@ -57,6 +65,8 @@ export default function AppLauncher() {
                 key={m.id}
                 onClick={async () => { beginClose(); await launchApp(m.id); }}
                 className="p-3 rounded-lg bg-neutral-800 hover:bg-neutral-750 text-left border border-neutral-700"
+                aria-label={`Launch ${m.title}`}
+                data-testid={`app-launcher-app-${m.id}`}
               >
                 <div className="flex items-center gap-2">
                   {Icon ? <Icon size={16} /> : null}
