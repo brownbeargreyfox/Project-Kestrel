@@ -1,11 +1,27 @@
 import { Router } from 'express';
 import os from 'node:os';
 import dns from 'node:dns/promises';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 const router = Router();
+const STATE_DIR = path.resolve(process.cwd(), '.kestrel');
+const LABELS_FILE = path.join(STATE_DIR, 'network-device-labels.json');
+const TRUST_STATES = new Set(['trusted', 'unknown', 'watch', 'blocked']);
+const DEVICE_KINDS = new Set([
+  'router/gateway',
+  'this-host',
+  'network-device',
+  'phone',
+  'camera/iot',
+  'media/iot',
+  'printer',
+  'computer',
+  'unknown',
+]);
 
 const PRIVATE_RANGES = [
   /^10\./,
@@ -34,6 +50,72 @@ function cleanMac(mac) {
   if (!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(normalized)) return null;
   if (normalized === '00:00:00:00:00:00' || normalized === 'ff:ff:ff:ff:ff:ff') return null;
   return normalized;
+}
+
+function getDeviceKey(device) {
+  if (device?.mac) return `mac:${device.mac}`;
+  return `ip:${device.ip}`;
+}
+
+function sanitizeText(value, maxLength) {
+  if (typeof value !== 'string') return '';
+  return value.trim().slice(0, maxLength);
+}
+
+function sanitizeTags(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((tag) => sanitizeText(tag, 24).toLowerCase())
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+function sanitizeLabelPatch(body) {
+  const trustState = TRUST_STATES.has(body?.trustState) ? body.trustState : 'unknown';
+  const kind = DEVICE_KINDS.has(body?.kind) ? body.kind : undefined;
+  return {
+    label: sanitizeText(body?.label, 64),
+    trustState,
+    kind,
+    notes: sanitizeText(body?.notes, 500),
+    tags: sanitizeTags(body?.tags),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+async function readLabels() {
+  try {
+    const raw = await fs.readFile(LABELS_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (error) {
+    if (error?.code === 'ENOENT') return {};
+    throw error;
+  }
+}
+
+async function writeLabels(labels) {
+  await fs.mkdir(STATE_DIR, { recursive: true });
+  await fs.writeFile(LABELS_FILE, `${JSON.stringify(labels, null, 2)}\n`, 'utf8');
+}
+
+function applyLabels(devices, labels) {
+  return devices.map((device) => {
+    const deviceKey = getDeviceKey(device);
+    const label = labels[deviceKey] ?? labels[`ip:${device.ip}`] ?? null;
+    const labelKind = label?.kind && DEVICE_KINDS.has(label.kind) ? label.kind : null;
+    return {
+      ...device,
+      deviceKey,
+      label: label?.label ?? '',
+      displayName: label?.label || device.hostname || device.mac || device.ip,
+      trustState: label?.trustState ?? 'unknown',
+      notes: label?.notes ?? '',
+      tags: Array.isArray(label?.tags) ? label.tags : [],
+      labelUpdatedAt: label?.updatedAt ?? null,
+      kind: labelKind ?? device.kind,
+    };
+  });
 }
 
 function getLocalInterfaces() {
@@ -193,6 +275,37 @@ async function enrichHostnames(devices) {
   return devices;
 }
 
+router.get('/labels', async (req, res) => {
+  try {
+    res.json({ ok: true, labels: await readLabels() });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message ?? 'Failed to read labels' });
+  }
+});
+
+router.post('/labels', async (req, res) => {
+  try {
+    const key = sanitizeText(req.body?.key, 96);
+    if (!/^(mac:([0-9a-f]{2}:){5}[0-9a-f]{2}|ip:\d+\.\d+\.\d+\.\d+)$/.test(key)) {
+      return res.status(400).json({ ok: false, error: 'Invalid device label key' });
+    }
+
+    const labels = await readLabels();
+    const patch = sanitizeLabelPatch(req.body);
+
+    if (!patch.label && patch.trustState === 'unknown' && !patch.notes && patch.tags.length === 0 && !patch.kind) {
+      delete labels[key];
+    } else {
+      labels[key] = patch;
+    }
+
+    await writeLabels(labels);
+    return res.json({ ok: true, key, label: labels[key] ?? null, labels });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message ?? 'Failed to save label' });
+  }
+});
+
 router.get('/devices', async (req, res) => {
   const startedAt = Date.now();
   const scanMode = req.query.scan === 'ping' ? 'ping' : 'passive';
@@ -205,7 +318,7 @@ router.get('/devices', async (req, res) => {
     }
 
     const arpOutput = await runArp();
-    const devices = parseArpTable(arpOutput);
+    let devices = parseArpTable(arpOutput);
 
     for (const iface of interfaces) {
       if (!devices.some((device) => device.ip === iface.ip)) {
@@ -224,6 +337,7 @@ router.get('/devices', async (req, res) => {
     }
 
     await enrichHostnames(devices);
+    devices = applyLabels(devices, await readLabels());
 
     devices.sort((a, b) => ipToNumber(a.ip) - ipToNumber(b.ip));
 
