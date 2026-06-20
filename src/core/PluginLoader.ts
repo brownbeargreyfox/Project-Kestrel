@@ -1,5 +1,6 @@
 // src/core/PluginLoader.ts - Production-ready with all fixes
-import { PluginManifest, PluginError } from '../Types/plugin';
+import type { PluginManifest } from '../Types/plugin';
+import { PluginError } from '../Types/plugin';
 
 export interface PluginSource {
   type: 'bundled' | 'remote' | 'local';
