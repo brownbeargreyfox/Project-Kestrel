@@ -14,6 +14,8 @@ export type KestrelApp = AppManifest & {
   // Optional window sizing hints
   w?: number;
   h?: number;
+  // Optional override to allow duplicate windows for the same app.
+  multiInstance?: boolean;
 };
 
 // NOTE: keep 'mount' for any legacy code that still uses it, but the launcher will
