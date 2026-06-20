@@ -512,6 +512,90 @@ async function resolveDeviceIdentity(device) {
   };
 }
 
+function riskLevel(score) {
+  if (score >= 75) return 'critical';
+  if (score >= 55) return 'high';
+  if (score >= 30) return 'medium';
+  if (score >= 10) return 'low';
+  return 'clear';
+}
+
+function addSignal(signals, score, severity, title, detail) {
+  signals.push({ score, severity, title, detail });
+}
+
+function assessDeviceRisk(device, identity, allDevices) {
+  const signals = [];
+  const trustState = device.trustState || 'unknown';
+  const kind = device.kind || 'network-device';
+  const family = identity?.likelyFamily || 'unclassified network device';
+  const confidence = identity?.confidence ?? 0;
+
+  if (device.isNew) {
+    addSignal(signals, 25, 'medium', 'New device', 'This device has not been acknowledged yet.');
+  }
+
+  if (trustState === 'watch') {
+    addSignal(signals, 30, 'high', 'Watch-listed', 'You marked this device for watch status.');
+  }
+
+  if (trustState === 'blocked') {
+    addSignal(signals, 45, 'critical', 'Blocked label', 'You marked this device as blocked in local inventory.');
+  }
+
+  if (trustState === 'unknown') {
+    addSignal(signals, 10, 'low', 'Unknown trust', 'This device has not been classified as trusted.');
+  }
+
+  if (!device.label) {
+    addSignal(signals, 8, 'low', 'Unlabeled device', 'No friendly name has been assigned yet.');
+  }
+
+  if (!device.hostname) {
+    addSignal(signals, 8, 'low', 'No hostname', 'Reverse DNS did not return a hostname.');
+  }
+
+  if (!device.mac) {
+    addSignal(signals, 12, 'medium', 'No MAC visible', 'The device is visible by IP but not by MAC in local inventory.');
+  }
+
+  if (kind === 'network-device' || kind === 'unknown') {
+    addSignal(signals, 10, 'low', 'Generic device type', 'The device kind is still generic.');
+  }
+
+  if (confidence < 0.45) {
+    addSignal(signals, 10, 'low', 'Low identity confidence', 'Identity resolver does not have enough clues yet.');
+  }
+
+  if ((kind === 'router/gateway' || family === 'network infrastructure') && trustState !== 'trusted') {
+    addSignal(signals, 18, 'medium', 'Infrastructure not trusted', 'A router/gateway-like device should be labeled and trusted intentionally.');
+  }
+
+  if (/iot|camera|smart home/i.test(family) && trustState !== 'trusted') {
+    addSignal(signals, 15, 'medium', 'IoT device not trusted', 'IoT-like devices should be labeled and classified.');
+  }
+
+  const gatewayLike = allDevices.filter((item) => item.kind === 'router/gateway');
+  if (device.kind === 'router/gateway' && gatewayLike.length > 1) {
+    addSignal(signals, 10, 'low', 'Multiple gateway-like devices', 'More than one gateway-like device is visible. This may be normal with mesh networks.');
+  }
+
+  const score = Math.min(100, signals.reduce((sum, signal) => sum + signal.score, 0));
+  return {
+    score,
+    level: riskLevel(score),
+    signals: signals.sort((a, b) => b.score - a.score),
+  };
+}
+
+function summarizeRisks(devices) {
+  const summary = { critical: 0, high: 0, medium: 0, low: 0, clear: 0 };
+  for (const device of devices) {
+    summary[device.risk?.level || 'clear'] += 1;
+  }
+  return summary;
+}
+
 router.get('/labels', async (req, res) => {
   try {
     res.json({ ok: true, labels: await readLabels() });
@@ -619,7 +703,17 @@ router.get('/devices', async (req, res) => {
     devices = historyResult.devices;
     await writeHistory(historyResult.history);
 
-    devices.sort((a, b) => ipToNumber(a.ip) - ipToNumber(b.ip));
+    devices = await runPool(devices, 8, async (device) => {
+      const identity = (await resolveDeviceIdentity(device)).identity;
+      const risk = assessDeviceRisk(device, identity, devices);
+      return { ...device, identity, risk };
+    });
+
+    devices.sort((a, b) => {
+      const riskDelta = (b.risk?.score ?? 0) - (a.risk?.score ?? 0);
+      if (riskDelta !== 0) return riskDelta;
+      return ipToNumber(a.ip) - ipToNumber(b.ip);
+    });
 
     res.json({
       ok: true,
@@ -629,6 +723,8 @@ router.get('/devices', async (req, res) => {
       interfaces,
       count: devices.length,
       newCount: devices.filter((device) => device.isNew).length,
+      riskSummary: summarizeRisks(devices),
+      externalIdentityLookupEnabled: ENABLE_EXTERNAL_IDENTITY_LOOKUP,
       devices,
       safety: {
         mode: scanMode === 'ping' ? 'bounded-icmp-ping-sweep' : 'passive-arp-cache',
