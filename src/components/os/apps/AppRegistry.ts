@@ -2,7 +2,7 @@
 // Unified app registry compatible with useUIStore.launchApp (component | loader | import)
 
 import { Terminal, Shield, Activity, Folder, BellRing, Globe, Bell, Plug } from 'lucide-react';
-import type { AppManifest } from '../../../types/os.types';
+import type { AppManifest } from '../../../Types/os.types';
 import type { ComponentType } from 'react';
 
 // Extend your manifest with fields our launcher understands
