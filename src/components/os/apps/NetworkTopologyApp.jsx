@@ -41,6 +41,14 @@ const TRUST_CLASSES = {
   blocked: 'border-red-800 bg-red-950/70 text-red-200',
 };
 
+const RISK_CLASSES = {
+  critical: 'border-red-800 bg-red-950/70 text-red-100',
+  high: 'border-orange-800 bg-orange-950/70 text-orange-100',
+  medium: 'border-amber-800 bg-amber-950/70 text-amber-100',
+  low: 'border-sky-800 bg-sky-950/70 text-sky-100',
+  clear: 'border-emerald-800 bg-emerald-950/70 text-emerald-100',
+};
+
 const CONFIDENCE_CLASSES = {
   high: 'border-emerald-800 bg-emerald-950/70 text-emerald-200',
   medium: 'border-amber-800 bg-amber-950/70 text-amber-200',
@@ -71,13 +79,7 @@ function getKindIcon(kind) {
 }
 
 function getDeviceScore(device) {
-  let score = 0;
-  if (device.isNew) score += 2;
-  if (!device.hostname) score += 1;
-  if (!device.mac) score += 1;
-  if (device.kind === 'unknown' || device.kind === 'network-device') score += 1;
-  if (device.trustState === 'unknown' || device.trustState === 'watch') score += 1;
-  return score;
+  return device.risk?.score ?? 0;
 }
 
 function parseTags(value) {
@@ -90,7 +92,8 @@ function parseTags(value) {
 
 function DeviceCard({ device, selected, onSelect }) {
   const Icon = getKindIcon(device.kind);
-  const score = getDeviceScore(device);
+  const riskScore = getDeviceScore(device);
+  const riskLevel = device.risk?.level || 'clear';
   const trustState = device.trustState || 'unknown';
 
   return (
@@ -121,6 +124,9 @@ function DeviceCard({ device, selected, onSelect }) {
           </div>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-2">
+          <div className={`rounded-full border px-2 py-0.5 text-[11px] ${RISK_CLASSES[riskLevel] || RISK_CLASSES.clear}`}>
+            {riskLevel.toUpperCase()} · {riskScore}
+          </div>
           <div className="rounded-full border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-300">
             {KIND_LABELS[device.kind] || device.kind}
           </div>
@@ -138,10 +144,10 @@ function DeviceCard({ device, selected, onSelect }) {
         </div>
       )}
 
-      {score > 0 && (
+      {(device.risk?.signals?.length ?? 0) > 0 && (
         <div className="mt-3 flex items-center gap-2 text-xs text-amber-300">
           <ShieldAlert size={14} />
-          <span>{score} identity signal{score > 1 ? 's' : ''}</span>
+          <span>{device.risk.signals.length} risk signal{device.risk.signals.length > 1 ? 's' : ''}</span>
         </div>
       )}
     </button>
@@ -154,8 +160,6 @@ export default function NetworkTopologyApp() {
   const [loading, setLoading] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [acknowledging, setAcknowledging] = React.useState(false);
-  const [resolvingIdentity, setResolvingIdentity] = React.useState(false);
-  const [identityResult, setIdentityResult] = React.useState(null);
   const [error, setError] = React.useState(null);
   const [saveMessage, setSaveMessage] = React.useState('');
   const [labelDraft, setLabelDraft] = React.useState('');
@@ -176,7 +180,6 @@ export default function NetworkTopologyApp() {
     setNotesDraft(selectedDevice.notes || '');
     setTagsDraft((selectedDevice.tags || []).join(', '));
     setSaveMessage('');
-    setIdentityResult(null);
   }, [selectedDevice?.deviceKey, selectedDevice?.ip]);
 
   const loadInventory = React.useCallback(async (mode = 'passive') => {
@@ -262,8 +265,7 @@ export default function NetworkTopologyApp() {
         };
       });
 
-      setSaveMessage('Saved');
-      setIdentityResult(null);
+      setSaveMessage('Saved. Refresh to recompute identity/risk.');
     } catch (err) {
       setError(err?.message ?? 'Failed to save device label');
     } finally {
@@ -295,12 +297,20 @@ export default function NetworkTopologyApp() {
           newCount: Math.max(0, (current.newCount ?? 0) - 1),
           devices: current.devices.map((device) => (
             device.deviceKey === selectedDevice.deviceKey
-              ? { ...device, isNew: false, acknowledgedAt: payload.acknowledgedAt }
+              ? {
+                  ...device,
+                  isNew: false,
+                  acknowledgedAt: payload.acknowledgedAt,
+                  risk: {
+                    ...(device.risk || {}),
+                    signals: (device.risk?.signals || []).filter((signal) => signal.title !== 'New device'),
+                  },
+                }
               : device
           )),
         };
       });
-      setSaveMessage('Acknowledged');
+      setSaveMessage('Acknowledged. Refresh to recompute risk.');
     } catch (err) {
       setError(err?.message ?? 'Failed to acknowledge device');
     } finally {
@@ -308,37 +318,16 @@ export default function NetworkTopologyApp() {
     }
   }, [selectedDevice]);
 
-  const resolveIdentity = React.useCallback(async () => {
-    if (!selectedDevice) return;
-    setResolvingIdentity(true);
-    setError(null);
-
-    try {
-      const response = await fetch('/api/network/identity/resolve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ device: selectedDevice }),
-      });
-      const payload = await response.json();
-      if (!response.ok || !payload.ok) {
-        throw new Error(payload.error || `Identity resolve failed with HTTP ${response.status}`);
-      }
-      setIdentityResult(payload.identity);
-    } catch (err) {
-      setError(err?.message ?? 'Failed to resolve device identity');
-    } finally {
-      setResolvingIdentity(false);
-    }
-  }, [selectedDevice]);
-
   const devices = inventory?.devices ?? [];
-  const unknownCount = devices.filter((device) => getDeviceScore(device) > 0).length;
+  const riskSummary = inventory?.riskSummary ?? { critical: 0, high: 0, medium: 0, low: 0, clear: 0 };
   const routerCount = devices.filter((device) => device.kind === 'router/gateway').length;
   const trustedCount = devices.filter((device) => device.trustState === 'trusted').length;
   const watchCount = devices.filter((device) => device.trustState === 'watch' || device.trustState === 'blocked').length;
   const newCount = devices.filter((device) => device.isNew).length;
-  const identityConfidenceClass = identityResult
-    ? CONFIDENCE_CLASSES[identityResult.confidenceLabel] || CONFIDENCE_CLASSES.low
+  const selectedIdentity = selectedDevice?.identity;
+  const selectedRisk = selectedDevice?.risk ?? { level: 'clear', score: 0, signals: [] };
+  const identityConfidenceClass = selectedIdentity
+    ? CONFIDENCE_CLASSES[selectedIdentity.confidenceLabel] || CONFIDENCE_CLASSES.low
     : CONFIDENCE_CLASSES.low;
 
   return (
@@ -351,7 +340,7 @@ export default function NetworkTopologyApp() {
               <h2 className="text-lg font-semibold">Home Network Inventory</h2>
             </div>
             <p className="mt-1 text-sm text-neutral-400">
-              Live local inventory with labels, first-seen tracking, and internal identity resolution.
+              IDS-lite local inventory: automatic identity, first-seen tracking, and risk scoring from observed device metadata.
             </p>
           </div>
 
@@ -380,7 +369,7 @@ export default function NetworkTopologyApp() {
         </div>
       </header>
 
-      <section className="grid grid-cols-2 gap-3 border-b border-neutral-800 p-4 md:grid-cols-6">
+      <section className="grid grid-cols-2 gap-3 border-b border-neutral-800 p-4 md:grid-cols-7">
         <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-3">
           <div className="text-xs uppercase tracking-wide text-neutral-500">Devices</div>
           <div className="mt-1 text-2xl font-semibold">{inventory?.count ?? '—'}</div>
@@ -389,6 +378,14 @@ export default function NetworkTopologyApp() {
           <div className="text-xs uppercase tracking-wide text-sky-400">New</div>
           <div className="mt-1 text-2xl font-semibold">{newCount}</div>
         </div>
+        <div className="rounded-lg border border-red-900 bg-red-950/40 p-3">
+          <div className="text-xs uppercase tracking-wide text-red-300">Critical/High</div>
+          <div className="mt-1 text-2xl font-semibold">{riskSummary.critical + riskSummary.high}</div>
+        </div>
+        <div className="rounded-lg border border-amber-900 bg-amber-950/40 p-3">
+          <div className="text-xs uppercase tracking-wide text-amber-300">Medium</div>
+          <div className="mt-1 text-2xl font-semibold">{riskSummary.medium}</div>
+        </div>
         <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-3">
           <div className="text-xs uppercase tracking-wide text-neutral-500">Trusted</div>
           <div className="mt-1 text-2xl font-semibold">{trustedCount}</div>
@@ -396,10 +393,6 @@ export default function NetworkTopologyApp() {
         <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-3">
           <div className="text-xs uppercase tracking-wide text-neutral-500">Watch</div>
           <div className="mt-1 text-2xl font-semibold">{watchCount}</div>
-        </div>
-        <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-3">
-          <div className="text-xs uppercase tracking-wide text-neutral-500">Identity Signals</div>
-          <div className="mt-1 text-2xl font-semibold">{unknownCount}</div>
         </div>
         <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-3">
           <div className="text-xs uppercase tracking-wide text-neutral-500">Mode</div>
@@ -414,11 +407,11 @@ export default function NetworkTopologyApp() {
         </div>
       )}
 
-      <main className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden p-4 lg:grid-cols-[minmax(340px,440px)_1fr]">
+      <main className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden p-4 lg:grid-cols-[minmax(360px,460px)_1fr]">
         <section className="min-h-0 overflow-auto rounded-xl border border-neutral-800 bg-neutral-950/60 p-3" data-testid="network-device-list">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold">Discovered devices</h3>
-            <span className="text-xs text-neutral-500">{inventory?.scannedAt ? new Date(inventory.scannedAt).toLocaleTimeString() : ''}</span>
+            <span className="text-xs text-neutral-500">Sorted by risk · {inventory?.scannedAt ? new Date(inventory.scannedAt).toLocaleTimeString() : ''}</span>
           </div>
 
           {loading && devices.length === 0 ? (
@@ -453,16 +446,6 @@ export default function NetworkTopologyApp() {
                     <div className="mt-1 text-xl font-semibold">{formatDeviceName(selectedDevice)}</div>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={resolveIdentity}
-                      disabled={resolvingIdentity}
-                      className="inline-flex items-center gap-2 rounded-lg border border-purple-700 bg-purple-950 px-3 py-2 text-sm text-purple-100 hover:bg-purple-900 disabled:opacity-50"
-                      data-testid="network-resolve-identity"
-                    >
-                      <Search size={16} />
-                      {resolvingIdentity ? 'Resolving…' : 'Resolve Identity'}
-                    </button>
                     {selectedDevice.isNew && (
                       <button
                         type="button"
@@ -478,6 +461,9 @@ export default function NetworkTopologyApp() {
                 </div>
                 <div className="mt-2 flex flex-wrap gap-2 text-xs">
                   {selectedDevice.isNew && <span className="rounded-full border border-sky-700 bg-sky-950 px-2 py-1 text-sky-200">New device</span>}
+                  <span className={`rounded-full border px-2 py-1 ${RISK_CLASSES[selectedRisk.level] || RISK_CLASSES.clear}`}>
+                    Risk {selectedRisk.level} · {selectedRisk.score}
+                  </span>
                   <span className="rounded-full border border-neutral-700 px-2 py-1 text-neutral-300">{KIND_LABELS[selectedDevice.kind] || selectedDevice.kind}</span>
                   <span className={`rounded-full border px-2 py-1 ${TRUST_CLASSES[selectedDevice.trustState || 'unknown'] || TRUST_CLASSES.unknown}`}>
                     {TRUST_LABELS[selectedDevice.trustState || 'unknown']}
@@ -485,33 +471,59 @@ export default function NetworkTopologyApp() {
                 </div>
               </div>
 
+              <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4" data-testid="network-device-risk">
+                <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                  <ShieldAlert size={16} />
+                  IDS-lite risk signals
+                </div>
+                {(selectedRisk.signals || []).length > 0 ? (
+                  <div className="space-y-2">
+                    {selectedRisk.signals.map((signal) => (
+                      <div key={`${signal.title}-${signal.detail}`} className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="font-medium text-neutral-100">{signal.title}</div>
+                          <span className={`rounded-full border px-2 py-0.5 text-[11px] ${RISK_CLASSES[signal.severity] || RISK_CLASSES.low}`}>
+                            {signal.severity} · +{signal.score}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-sm text-neutral-400">{signal.detail}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-emerald-900 bg-emerald-950/40 p-3 text-sm text-emerald-100">
+                    No current local risk signals for this device.
+                  </div>
+                )}
+              </div>
+
               <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4" data-testid="network-device-identity">
                 <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
                   <Search size={16} />
-                  Internal identity resolver
+                  Automatic identity
                 </div>
 
-                {identityResult ? (
+                {selectedIdentity ? (
                   <div className="space-y-4">
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                       <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
                         <div className="text-xs uppercase tracking-wide text-neutral-500">Likely Vendor</div>
-                        <div className="mt-1 text-sm font-semibold">{identityResult.likelyVendor || 'unknown'}</div>
+                        <div className="mt-1 text-sm font-semibold">{selectedIdentity.likelyVendor || 'unknown'}</div>
                       </div>
                       <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
                         <div className="text-xs uppercase tracking-wide text-neutral-500">Likely Family</div>
-                        <div className="mt-1 text-sm font-semibold">{identityResult.likelyFamily || 'unclassified'}</div>
+                        <div className="mt-1 text-sm font-semibold">{selectedIdentity.likelyFamily || 'unclassified'}</div>
                       </div>
                       <div className={`rounded-lg border p-3 ${identityConfidenceClass}`}>
                         <div className="text-xs uppercase tracking-wide opacity-70">Confidence</div>
-                        <div className="mt-1 text-sm font-semibold">{identityResult.confidenceLabel} · {formatConfidence(identityResult.confidence)}</div>
+                        <div className="mt-1 text-sm font-semibold">{selectedIdentity.confidenceLabel} · {formatConfidence(selectedIdentity.confidence)}</div>
                       </div>
                     </div>
 
                     <div>
                       <div className="text-xs uppercase tracking-wide text-neutral-500">Sources</div>
                       <div className="mt-2 flex flex-wrap gap-1">
-                        {(identityResult.sources || []).map((source) => (
+                        {(selectedIdentity.sources || []).map((source) => (
                           <span key={source} className="rounded bg-neutral-800 px-2 py-0.5 text-[11px] text-neutral-300">{source}</span>
                         ))}
                       </div>
@@ -520,7 +532,7 @@ export default function NetworkTopologyApp() {
                     <div>
                       <div className="text-xs uppercase tracking-wide text-neutral-500">Reasoning</div>
                       <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-neutral-300">
-                        {(identityResult.reasons || []).map((reason) => (
+                        {(selectedIdentity.reasons || []).map((reason) => (
                           <li key={reason}>{reason}</li>
                         ))}
                       </ul>
@@ -532,7 +544,7 @@ export default function NetworkTopologyApp() {
                         These are secondary. Kestrel does not open or call them unless you click.
                       </p>
                       <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
-                        {(identityResult.researchLinks || []).map((link) => (
+                        {(selectedIdentity.researchLinks || []).map((link) => (
                           <a
                             key={link.label}
                             href={link.url}
@@ -549,7 +561,7 @@ export default function NetworkTopologyApp() {
                   </div>
                 ) : (
                   <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-4 text-sm text-neutral-400">
-                    Click Resolve Identity to use local labels, hostname, kind, notes, tags, MAC prefix, and identity cache. External vendor lookup is off unless enabled on the API process.
+                    Identity will appear after the next inventory refresh.
                   </div>
                 )}
               </div>
@@ -683,7 +695,7 @@ export default function NetworkTopologyApp() {
               <div className="rounded-xl border border-amber-900/60 bg-amber-950/20 p-4 text-sm text-amber-100">
                 <div className="font-semibold">Operator note</div>
                 <p className="mt-1 text-amber-100/80">
-                  Identity resolution is an assist, not proof. Confirm identity with your router app, device admin page, or the physical device before trusting it.
+                  This is IDS-lite inventory analysis, not packet inspection. Treat it as a local risk triage layer: useful for new/unknown/poorly-labeled devices, not proof of compromise.
                 </p>
               </div>
             </div>
