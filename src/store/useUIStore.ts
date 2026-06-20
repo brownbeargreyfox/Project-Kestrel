@@ -3,6 +3,7 @@
 
 import { create } from 'zustand';
 import type { ComponentType } from 'react';
+import { AppRegistry, type KestrelApp } from '../components/os/apps/AppRegistry';
 
 export interface Toast {
   id: string;
@@ -260,19 +261,7 @@ export const useUIStore = create<UIState>((set, get) => ({
     }
 
     try {
-      // Load from the registry
-      const mod = await import('/src/components/os/apps/AppRegistry');
-      type RegistryEntry = {
-        title: string;
-        component?: any;
-        loader?: () => Promise<any>;
-        import?: () => Promise<any>;
-        w?: number; h?: number;
-        // optional override to allow duplicates
-        multiInstance?: boolean;
-      };
-      const AppRegistry = (mod as any).AppRegistry as Record<string, RegistryEntry>;
-      const app = AppRegistry?.[appId];
+      const app = (AppRegistry as Record<string, KestrelApp | undefined>)[appId];
 
       if (!app) {
         console.warn(`[launchApp] No app registered for id "${appId}"`);
