@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Router,
   Save,
+  Search,
   ShieldAlert,
   Tags,
   Wifi,
@@ -18,12 +19,12 @@ const KIND_LABELS = {
   'router/gateway': 'Router / Gateway',
   'this-host': 'This PC',
   'network-device': 'Network Device',
-  'phone': 'Phone',
+  phone: 'Phone',
   'camera/iot': 'Camera / IoT',
   'media/iot': 'Media / IoT',
-  'printer': 'Printer',
-  'computer': 'Computer',
-  'unknown': 'Unknown',
+  printer: 'Printer',
+  computer: 'Computer',
+  unknown: 'Unknown',
 };
 
 const TRUST_LABELS = {
@@ -40,6 +41,12 @@ const TRUST_CLASSES = {
   blocked: 'border-red-800 bg-red-950/70 text-red-200',
 };
 
+const CONFIDENCE_CLASSES = {
+  high: 'border-emerald-800 bg-emerald-950/70 text-emerald-200',
+  medium: 'border-amber-800 bg-amber-950/70 text-amber-200',
+  low: 'border-neutral-700 bg-neutral-900 text-neutral-300',
+};
+
 const KIND_OPTIONS = Object.keys(KIND_LABELS);
 const TRUST_OPTIONS = Object.keys(TRUST_LABELS);
 
@@ -50,6 +57,11 @@ function formatDeviceName(device) {
 function formatDate(value) {
   if (!value) return 'not set';
   return new Date(value).toLocaleString();
+}
+
+function formatConfidence(value) {
+  if (typeof value !== 'number') return '—';
+  return `${Math.round(value * 100)}%`;
 }
 
 function getKindIcon(kind) {
@@ -74,52 +86,6 @@ function parseTags(value) {
     .map((tag) => tag.trim().toLowerCase())
     .filter(Boolean)
     .slice(0, 8);
-}
-
-function queryUrl(query) {
-  return `https://duckduckgo.com/?q=${encodeURIComponent(query)}`;
-}
-
-function buildResearchLinks(device) {
-  if (!device) return [];
-
-  const name = formatDeviceName(device);
-  const kind = KIND_LABELS[device.kind] || device.kind || 'network device';
-  const macPrefix = device.macPrefix || device.mac?.split(':').slice(0, 3).join(':') || '';
-  const hostname = device.hostname || '';
-  const label = device.label || '';
-  const tags = Array.isArray(device.tags) ? device.tags.join(' ') : '';
-
-  const links = [
-    {
-      label: 'Search identity clues',
-      description: 'Best first click: combines label, hostname, kind, and visible IDs.',
-      url: queryUrl(`${label} ${hostname} ${kind} ${macPrefix} home network device`.trim()),
-    },
-    {
-      label: 'Search MAC/OUI vendor',
-      description: 'Uses the first three MAC octets to look for likely manufacturer information.',
-      url: queryUrl(`${macPrefix || device.mac || device.ip} MAC OUI vendor`),
-      disabled: !macPrefix && !device.mac,
-    },
-    {
-      label: 'Search device type',
-      description: 'Helps map the inferred kind to common home-network devices.',
-      url: queryUrl(`${kind} ${hostname || label || tags} home network device type`.trim()),
-    },
-    {
-      label: 'IEEE registry',
-      description: 'Official public registration authority lookup for assigned identifiers.',
-      url: 'https://regauth.standards.ieee.org/standards-ra-web/pub/view.html#registries',
-    },
-    {
-      label: 'Wireshark OUI lookup',
-      description: 'OUI lookup tool for vendor information from MAC prefixes.',
-      url: 'https://www.wireshark.org/tools/oui-lookup.html',
-    },
-  ];
-
-  return links.filter((link) => !link.disabled);
 }
 
 function DeviceCard({ device, selected, onSelect }) {
@@ -188,6 +154,8 @@ export default function NetworkTopologyApp() {
   const [loading, setLoading] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [acknowledging, setAcknowledging] = React.useState(false);
+  const [resolvingIdentity, setResolvingIdentity] = React.useState(false);
+  const [identityResult, setIdentityResult] = React.useState(null);
   const [error, setError] = React.useState(null);
   const [saveMessage, setSaveMessage] = React.useState('');
   const [labelDraft, setLabelDraft] = React.useState('');
@@ -208,6 +176,7 @@ export default function NetworkTopologyApp() {
     setNotesDraft(selectedDevice.notes || '');
     setTagsDraft((selectedDevice.tags || []).join(', '));
     setSaveMessage('');
+    setIdentityResult(null);
   }, [selectedDevice?.deviceKey, selectedDevice?.ip]);
 
   const loadInventory = React.useCallback(async (mode = 'passive') => {
@@ -294,6 +263,7 @@ export default function NetworkTopologyApp() {
       });
 
       setSaveMessage('Saved');
+      setIdentityResult(null);
     } catch (err) {
       setError(err?.message ?? 'Failed to save device label');
     } finally {
@@ -338,13 +308,38 @@ export default function NetworkTopologyApp() {
     }
   }, [selectedDevice]);
 
+  const resolveIdentity = React.useCallback(async () => {
+    if (!selectedDevice) return;
+    setResolvingIdentity(true);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/network/identity/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device: selectedDevice }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || `Identity resolve failed with HTTP ${response.status}`);
+      }
+      setIdentityResult(payload.identity);
+    } catch (err) {
+      setError(err?.message ?? 'Failed to resolve device identity');
+    } finally {
+      setResolvingIdentity(false);
+    }
+  }, [selectedDevice]);
+
   const devices = inventory?.devices ?? [];
   const unknownCount = devices.filter((device) => getDeviceScore(device) > 0).length;
   const routerCount = devices.filter((device) => device.kind === 'router/gateway').length;
   const trustedCount = devices.filter((device) => device.trustState === 'trusted').length;
   const watchCount = devices.filter((device) => device.trustState === 'watch' || device.trustState === 'blocked').length;
   const newCount = devices.filter((device) => device.isNew).length;
-  const researchLinks = buildResearchLinks(selectedDevice);
+  const identityConfidenceClass = identityResult
+    ? CONFIDENCE_CLASSES[identityResult.confidenceLabel] || CONFIDENCE_CLASSES.low
+    : CONFIDENCE_CLASSES.low;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-neutral-950 text-neutral-100" data-testid="home-network-inventory">
@@ -356,7 +351,7 @@ export default function NetworkTopologyApp() {
               <h2 className="text-lg font-semibold">Home Network Inventory</h2>
             </div>
             <p className="mt-1 text-sm text-neutral-400">
-              Live local inventory with labels, first-seen tracking, and web cross-references for device identity.
+              Live local inventory with labels, first-seen tracking, and internal identity resolution.
             </p>
           </div>
 
@@ -457,17 +452,29 @@ export default function NetworkTopologyApp() {
                     <div className="text-xs uppercase tracking-wide text-neutral-500">Selected</div>
                     <div className="mt-1 text-xl font-semibold">{formatDeviceName(selectedDevice)}</div>
                   </div>
-                  {selectedDevice.isNew && (
+                  <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      onClick={acknowledgeDevice}
-                      disabled={acknowledging}
-                      className="rounded-lg border border-sky-700 bg-sky-950 px-3 py-2 text-sm text-sky-100 hover:bg-sky-900 disabled:opacity-50"
-                      data-testid="network-acknowledge-device"
+                      onClick={resolveIdentity}
+                      disabled={resolvingIdentity}
+                      className="inline-flex items-center gap-2 rounded-lg border border-purple-700 bg-purple-950 px-3 py-2 text-sm text-purple-100 hover:bg-purple-900 disabled:opacity-50"
+                      data-testid="network-resolve-identity"
                     >
-                      {acknowledging ? 'Acknowledging…' : 'Acknowledge new'}
+                      <Search size={16} />
+                      {resolvingIdentity ? 'Resolving…' : 'Resolve Identity'}
                     </button>
-                  )}
+                    {selectedDevice.isNew && (
+                      <button
+                        type="button"
+                        onClick={acknowledgeDevice}
+                        disabled={acknowledging}
+                        className="rounded-lg border border-sky-700 bg-sky-950 px-3 py-2 text-sm text-sky-100 hover:bg-sky-900 disabled:opacity-50"
+                        data-testid="network-acknowledge-device"
+                      >
+                        {acknowledging ? 'Acknowledging…' : 'Acknowledge new'}
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-2 text-xs">
                   {selectedDevice.isNew && <span className="rounded-full border border-sky-700 bg-sky-950 px-2 py-1 text-sky-200">New device</span>}
@@ -478,32 +485,73 @@ export default function NetworkTopologyApp() {
                 </div>
               </div>
 
-              <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4" data-testid="network-device-research">
+              <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4" data-testid="network-device-identity">
                 <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
-                  <ExternalLink size={16} />
-                  Web cross-reference
+                  <Search size={16} />
+                  Internal identity resolver
                 </div>
-                <p className="mb-3 text-xs text-neutral-400">
-                  These links open in your browser and use visible identity clues. Kestrel does not call those sites in the background.
-                </p>
-                <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                  {researchLinks.map((link) => (
-                    <a
-                      key={link.label}
-                      href={link.url}
-                      target="_blank"
-                      rel="noreferrer noopener"
-                      className="rounded-lg border border-neutral-700 bg-neutral-950 p-3 text-sm hover:border-sky-700 hover:bg-neutral-900"
-                      data-testid={`network-research-${link.label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
-                    >
-                      <div className="flex items-center justify-between gap-2 font-medium text-sky-200">
-                        <span>{link.label}</span>
-                        <ExternalLink size={14} />
+
+                {identityResult ? (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                      <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+                        <div className="text-xs uppercase tracking-wide text-neutral-500">Likely Vendor</div>
+                        <div className="mt-1 text-sm font-semibold">{identityResult.likelyVendor || 'unknown'}</div>
                       </div>
-                      <div className="mt-1 text-xs text-neutral-500">{link.description}</div>
-                    </a>
-                  ))}
-                </div>
+                      <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+                        <div className="text-xs uppercase tracking-wide text-neutral-500">Likely Family</div>
+                        <div className="mt-1 text-sm font-semibold">{identityResult.likelyFamily || 'unclassified'}</div>
+                      </div>
+                      <div className={`rounded-lg border p-3 ${identityConfidenceClass}`}>
+                        <div className="text-xs uppercase tracking-wide opacity-70">Confidence</div>
+                        <div className="mt-1 text-sm font-semibold">{identityResult.confidenceLabel} · {formatConfidence(identityResult.confidence)}</div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-xs uppercase tracking-wide text-neutral-500">Sources</div>
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {(identityResult.sources || []).map((source) => (
+                          <span key={source} className="rounded bg-neutral-800 px-2 py-0.5 text-[11px] text-neutral-300">{source}</span>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-xs uppercase tracking-wide text-neutral-500">Reasoning</div>
+                      <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-neutral-300">
+                        {(identityResult.reasons || []).map((reason) => (
+                          <li key={reason}>{reason}</li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    <details className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+                      <summary className="cursor-pointer text-sm font-medium text-neutral-200">Manual web fallbacks</summary>
+                      <p className="mt-2 text-xs text-neutral-500">
+                        These are secondary. Kestrel does not open or call them unless you click.
+                      </p>
+                      <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+                        {(identityResult.researchLinks || []).map((link) => (
+                          <a
+                            key={link.label}
+                            href={link.url}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                            className="inline-flex items-center justify-between gap-2 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-sky-200 hover:border-sky-700"
+                          >
+                            <span>{link.label}</span>
+                            <ExternalLink size={14} />
+                          </a>
+                        ))}
+                      </div>
+                    </details>
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-4 text-sm text-neutral-400">
+                    Click Resolve Identity to use local labels, hostname, kind, notes, tags, MAC prefix, and identity cache. External vendor lookup is off unless enabled on the API process.
+                  </div>
+                )}
               </div>
 
               <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4" data-testid="network-device-label-editor">
@@ -635,7 +683,7 @@ export default function NetworkTopologyApp() {
               <div className="rounded-xl border border-amber-900/60 bg-amber-950/20 p-4 text-sm text-amber-100">
                 <div className="font-semibold">Operator note</div>
                 <p className="mt-1 text-amber-100/80">
-                  Web links are research shortcuts. Confirm identity with your router app, device admin page, or the physical device before trusting it.
+                  Identity resolution is an assist, not proof. Confirm identity with your router app, device admin page, or the physical device before trusting it.
                 </p>
               </div>
             </div>
