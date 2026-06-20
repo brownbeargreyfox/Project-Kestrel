@@ -103,12 +103,12 @@ export const AppRegistry: Record<string, KestrelApp> = {
 
   'network-topology': {
     id: 'network-topology',
-    title: 'Network Topology',
+    title: 'Home Network',
     icon: Globe,
     permissions: ['ui:window', 'events:subscribe', 'data:topology.read', 'data:metrics.read'],
     import: () => import('./NetworkTopologyApp.jsx'),
     mount: () => import('./NetworkTopologyApp.jsx'),
-    w: 1100, h: 700,
+    w: 1180, h: 760,
   },
 
   // === LEGACY COMPATIBILITY ===
