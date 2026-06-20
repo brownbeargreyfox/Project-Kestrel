@@ -2,7 +2,6 @@ import React, { useMemo } from 'react';
 import { useDashboardStore } from '../../store/useDashboardStore';
 import StatusBadge from '../feedback/StatusBadge';
 import { X, Server, AlertTriangle } from 'lucide-react';
-import dayjs from 'dayjs';
 
 // --- Dynamic Impact Calculation Logic ---
 
@@ -23,8 +22,9 @@ const getTierMultiplier = (asset) => {
 };
 
 const getTimeOfDayMultiplier = () => {
-  const hour = dayjs().hour();
-  const day = dayjs().day();
+  const now = new Date();
+  const hour = now.getHours();
+  const day = now.getDay();
   if (day >= 1 && day <= 5 && hour >= 9 && hour < 17) {
     return 2; // Business hours
   }
@@ -171,7 +171,7 @@ export default function SimulationPlanPane({
       };
     }
     
-    let rawImpactScore = selectedAssetDetails.reduce((acc, asset) => {
+    const rawImpactScore = selectedAssetDetails.reduce((acc, asset) => {
       return acc + (getAssetWeight(asset) * getTierMultiplier(asset));
     }, 0);
 
@@ -199,9 +199,10 @@ export default function SimulationPlanPane({
       estimatedRevenue: Math.floor(finalImpactScore * 1250),
       riskFactors,
       implementationConsiderations,
+      shouldUseMaintenanceWindow: needsMaintenanceWindow,
       maintenanceWindow: needsMaintenanceWindow
     };
-  }, [selectedAssets, selectedAction, serverOverview]);
+  }, [selectedAssetDetails, selectedAction, serverOverview]);
 
   return (
     <div className="fixed right-0 top-0 h-full w-96 bg-white dark:bg-gray-800 shadow-2xl border-l border-gray-200 dark:border-gray-700 z-50 flex flex-col">
