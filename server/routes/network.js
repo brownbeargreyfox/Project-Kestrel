@@ -11,6 +11,8 @@ const router = Router();
 const STATE_DIR = path.resolve(process.cwd(), '.kestrel');
 const LABELS_FILE = path.join(STATE_DIR, 'network-device-labels.json');
 const HISTORY_FILE = path.join(STATE_DIR, 'network-device-history.json');
+const IDENTITY_CACHE_FILE = path.join(STATE_DIR, 'network-identity-cache.json');
+const ENABLE_EXTERNAL_IDENTITY_LOOKUP = process.env.KESTREL_ENABLE_EXTERNAL_IDENTITY_LOOKUP === 'true';
 const TRUST_STATES = new Set(['trusted', 'unknown', 'watch', 'blocked']);
 const DEVICE_KINDS = new Set([
   'router/gateway',
@@ -121,6 +123,14 @@ async function writeHistory(history) {
   return writeJsonFile(HISTORY_FILE, history);
 }
 
+async function readIdentityCache() {
+  return readJsonFile(IDENTITY_CACHE_FILE);
+}
+
+async function writeIdentityCache(cache) {
+  return writeJsonFile(IDENTITY_CACHE_FILE, cache);
+}
+
 function applyLabels(devices, labels) {
   return devices.map((device) => {
     const deviceKey = getDeviceKey(device);
@@ -198,9 +208,7 @@ function getLocalInterfaces() {
 }
 
 async function runArp() {
-  const command = process.platform === 'win32' ? 'arp' : 'arp';
-  const args = ['-a'];
-  const { stdout } = await execFileAsync(command, args, { timeout: 5000, windowsHide: true });
+  const { stdout } = await execFileAsync('arp', ['-a'], { timeout: 5000, windowsHide: true });
   return stdout;
 }
 
@@ -331,6 +339,179 @@ async function enrichHostnames(devices) {
   return devices;
 }
 
+function inferFamilyFromText(device, vendor) {
+  const text = [
+    device.label,
+    device.displayName,
+    device.hostname,
+    device.kind,
+    device.notes,
+    ...(Array.isArray(device.tags) ? device.tags : []),
+    vendor,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  if (/deco|router|gateway|mesh|ap\b|access point|tplink|tp-link|eero|orbi/.test(text)) return 'network infrastructure';
+  if (/camera|cam|doorbell|wyze|ring|arlo|nest/.test(text)) return 'camera / security IoT';
+  if (/tv|roku|chromecast|fire tv|shield|xbox|playstation|ps5|media/.test(text)) return 'media / entertainment';
+  if (/phone|iphone|pixel|android|galaxy/.test(text)) return 'phone / mobile';
+  if (/printer|brother|canon|epson|hp/.test(text)) return 'printer';
+  if (/laptop|desktop|pc|macbook|windows|linux/.test(text)) return 'computer';
+  if (/thermostat|sensor|bulb|plug|iot|smart/.test(text)) return 'smart home IoT';
+  return 'unclassified network device';
+}
+
+function buildResearchLinks(device, vendor) {
+  const macPrefix = device.macPrefix || getMacPrefix(device.mac) || '';
+  const queryBits = [device.label, device.hostname, vendor, device.kind, macPrefix]
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+
+  return [
+    {
+      label: 'Search identity clues',
+      url: `https://duckduckgo.com/?q=${encodeURIComponent(`${queryBits} home network device`)}`,
+    },
+    {
+      label: 'Search MAC/OUI vendor',
+      url: `https://duckduckgo.com/?q=${encodeURIComponent(`${macPrefix || device.mac || device.ip} MAC OUI vendor`)}`,
+    },
+    {
+      label: 'IEEE registry',
+      url: 'https://regauth.standards.ieee.org/standards-ra-web/pub/view.html#registries',
+    },
+    {
+      label: 'Wireshark OUI lookup',
+      url: 'https://www.wireshark.org/tools/oui-lookup.html',
+    },
+  ];
+}
+
+async function lookupExternalVendor(device, cache) {
+  const mac = cleanMac(device.mac);
+  const macPrefix = getMacPrefix(mac);
+  if (!ENABLE_EXTERNAL_IDENTITY_LOOKUP || !mac || !macPrefix) return null;
+
+  const cached = cache[macPrefix];
+  if (cached?.vendor) return { ...cached, source: 'identity-cache' };
+
+  if (typeof fetch !== 'function') return null;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 1500);
+
+  try {
+    const response = await fetch(`https://api.macvendors.com/${encodeURIComponent(mac)}`, {
+      signal: controller.signal,
+      headers: { Accept: 'text/plain' },
+    });
+    if (!response.ok) return null;
+    const vendor = sanitizeText(await response.text(), 96);
+    if (!vendor) return null;
+
+    const record = {
+      vendor,
+      source: 'macvendors',
+      macPrefix,
+      cachedAt: new Date().toISOString(),
+    };
+    cache[macPrefix] = record;
+    await writeIdentityCache(cache);
+    return record;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function resolveDeviceIdentity(device) {
+  const cache = await readIdentityCache();
+  const normalized = {
+    ...device,
+    mac: cleanMac(device.mac),
+    ip: sanitizeText(device.ip, 32),
+    hostname: sanitizeText(device.hostname, 128),
+    label: sanitizeText(device.label, 64),
+    kind: DEVICE_KINDS.has(device.kind) ? device.kind : 'network-device',
+    notes: sanitizeText(device.notes, 500),
+    tags: sanitizeTags(device.tags),
+  };
+  normalized.macPrefix = getMacPrefix(normalized.mac);
+  normalized.deviceKey = normalized.deviceKey || getDeviceKey(normalized);
+
+  const sources = [];
+  const reasons = [];
+  let vendor = null;
+  let confidence = 0.25;
+
+  if (normalized.label) {
+    sources.push('label');
+    reasons.push(`You labeled this device as “${normalized.label}”.`);
+    confidence += 0.25;
+  }
+
+  if (normalized.hostname) {
+    sources.push('hostname');
+    reasons.push(`Hostname resolved as “${normalized.hostname}”.`);
+    confidence += 0.15;
+  }
+
+  if (normalized.kind && normalized.kind !== 'network-device' && normalized.kind !== 'unknown') {
+    sources.push('kind');
+    reasons.push(`Current kind is “${normalized.kind}”.`);
+    confidence += 0.1;
+  }
+
+  if (normalized.macPrefix && cache[normalized.macPrefix]?.vendor) {
+    vendor = cache[normalized.macPrefix].vendor;
+    sources.push('identity-cache');
+    reasons.push(`Cached MAC prefix ${normalized.macPrefix} maps to “${vendor}”.`);
+    confidence += 0.2;
+  }
+
+  const external = await lookupExternalVendor(normalized, cache);
+  if (external?.vendor) {
+    vendor = external.vendor;
+    if (!sources.includes(external.source)) sources.push(external.source);
+    reasons.push(`MAC vendor lookup returned “${vendor}”.`);
+    confidence += 0.25;
+  }
+
+  if (normalized.macPrefix && !vendor) {
+    sources.push('mac-prefix');
+    reasons.push(`MAC prefix ${normalized.macPrefix} is available for vendor lookup.`);
+  }
+
+  if (normalized.tags.length > 0) {
+    sources.push('tags');
+    reasons.push(`Tags: ${normalized.tags.join(', ')}.`);
+    confidence += 0.05;
+  }
+
+  const family = inferFamilyFromText(normalized, vendor);
+  if (family !== 'unclassified network device') confidence += 0.1;
+
+  confidence = Math.max(0.05, Math.min(0.95, confidence));
+
+  return {
+    ok: true,
+    resolvedAt: new Date().toISOString(),
+    externalLookupEnabled: ENABLE_EXTERNAL_IDENTITY_LOOKUP,
+    identity: {
+      deviceKey: normalized.deviceKey,
+      displayName: normalized.label || normalized.hostname || normalized.mac || normalized.ip,
+      likelyVendor: vendor,
+      likelyFamily: family,
+      confidence,
+      confidenceLabel: confidence >= 0.75 ? 'high' : confidence >= 0.45 ? 'medium' : 'low',
+      sources: [...new Set(sources)],
+      reasons,
+      researchLinks: buildResearchLinks(normalized, vendor),
+    },
+  };
+}
+
 router.get('/labels', async (req, res) => {
   try {
     res.json({ ok: true, labels: await readLabels() });
@@ -359,6 +540,18 @@ router.post('/labels', async (req, res) => {
     return res.json({ ok: true, key, label: labels[key] ?? null, labels });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message ?? 'Failed to save label' });
+  }
+});
+
+router.post('/identity/resolve', async (req, res) => {
+  try {
+    const device = req.body?.device;
+    if (!device || typeof device !== 'object') {
+      return res.status(400).json({ ok: false, error: 'Missing device payload' });
+    }
+    return res.json(await resolveDeviceIdentity(device));
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message ?? 'Failed to resolve identity' });
   }
 });
 
