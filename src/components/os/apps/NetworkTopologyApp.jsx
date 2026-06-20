@@ -1,7 +1,7 @@
 // src/components/os/apps/NetworkTopologyApp.jsx
 
 import React from 'react';
-import { Globe, Router, Monitor, RefreshCw, Radar, ShieldAlert, Wifi } from 'lucide-react';
+import { Globe, Router, Monitor, RefreshCw, Radar, ShieldAlert, Wifi, Save, Tags } from 'lucide-react';
 
 const KIND_LABELS = {
   'router/gateway': 'Router / Gateway',
@@ -15,8 +15,25 @@ const KIND_LABELS = {
   'unknown': 'Unknown',
 };
 
+const TRUST_LABELS = {
+  trusted: 'Trusted',
+  unknown: 'Unknown',
+  watch: 'Watch',
+  blocked: 'Blocked label',
+};
+
+const TRUST_CLASSES = {
+  trusted: 'border-emerald-800 bg-emerald-950/70 text-emerald-200',
+  unknown: 'border-neutral-700 bg-neutral-900 text-neutral-300',
+  watch: 'border-amber-800 bg-amber-950/70 text-amber-200',
+  blocked: 'border-red-800 bg-red-950/70 text-red-200',
+};
+
+const KIND_OPTIONS = Object.keys(KIND_LABELS);
+const TRUST_OPTIONS = Object.keys(TRUST_LABELS);
+
 function formatDeviceName(device) {
-  return device.hostname || device.mac || device.ip;
+  return device.displayName || device.label || device.hostname || device.mac || device.ip;
 }
 
 function getKindIcon(kind) {
@@ -30,12 +47,22 @@ function getDeviceScore(device) {
   if (!device.hostname) score += 1;
   if (!device.mac) score += 1;
   if (device.kind === 'unknown' || device.kind === 'network-device') score += 1;
+  if (device.trustState === 'unknown' || device.trustState === 'watch') score += 1;
   return score;
+}
+
+function parseTags(value) {
+  return value
+    .split(',')
+    .map((tag) => tag.trim().toLowerCase())
+    .filter(Boolean)
+    .slice(0, 8);
 }
 
 function DeviceCard({ device, selected, onSelect }) {
   const Icon = getKindIcon(device.kind);
   const score = getDeviceScore(device);
+  const trustState = device.trustState || 'unknown';
 
   return (
     <button
@@ -57,10 +84,24 @@ function DeviceCard({ device, selected, onSelect }) {
             <div className="mt-1 truncate text-xs text-neutral-500">{device.mac || 'No MAC visible'}</div>
           </div>
         </div>
-        <div className="shrink-0 rounded-full border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-300">
-          {KIND_LABELS[device.kind] || device.kind}
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          <div className="rounded-full border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-300">
+            {KIND_LABELS[device.kind] || device.kind}
+          </div>
+          <div className={`rounded-full border px-2 py-0.5 text-[11px] ${TRUST_CLASSES[trustState] || TRUST_CLASSES.unknown}`}>
+            {TRUST_LABELS[trustState] || trustState}
+          </div>
         </div>
       </div>
+
+      {device.tags?.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1">
+          {device.tags.map((tag) => (
+            <span key={tag} className="rounded bg-neutral-800 px-2 py-0.5 text-[11px] text-neutral-300">#{tag}</span>
+          ))}
+        </div>
+      )}
+
       {score > 0 && (
         <div className="mt-3 flex items-center gap-2 text-xs text-amber-300">
           <ShieldAlert size={14} />
@@ -75,11 +116,28 @@ export default function NetworkTopologyApp() {
   const [inventory, setInventory] = React.useState(null);
   const [selectedIp, setSelectedIp] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState(null);
+  const [saveMessage, setSaveMessage] = React.useState('');
+  const [labelDraft, setLabelDraft] = React.useState('');
+  const [trustDraft, setTrustDraft] = React.useState('unknown');
+  const [kindDraft, setKindDraft] = React.useState('network-device');
+  const [notesDraft, setNotesDraft] = React.useState('');
+  const [tagsDraft, setTagsDraft] = React.useState('');
 
   const selectedDevice = React.useMemo(() => {
     return inventory?.devices?.find((device) => device.ip === selectedIp) ?? null;
   }, [inventory, selectedIp]);
+
+  React.useEffect(() => {
+    if (!selectedDevice) return;
+    setLabelDraft(selectedDevice.label || '');
+    setTrustDraft(selectedDevice.trustState || 'unknown');
+    setKindDraft(selectedDevice.kind || 'network-device');
+    setNotesDraft(selectedDevice.notes || '');
+    setTagsDraft((selectedDevice.tags || []).join(', '));
+    setSaveMessage('');
+  }, [selectedDevice?.deviceKey, selectedDevice?.ip]);
 
   const loadInventory = React.useCallback(async (mode = 'passive') => {
     setLoading(true);
@@ -107,9 +165,76 @@ export default function NetworkTopologyApp() {
     loadInventory('passive');
   }, [loadInventory]);
 
+  const saveDeviceLabel = React.useCallback(async () => {
+    if (!selectedDevice?.deviceKey) return;
+    setSaving(true);
+    setError(null);
+    setSaveMessage('');
+
+    try {
+      const body = {
+        key: selectedDevice.deviceKey,
+        label: labelDraft,
+        trustState: trustDraft,
+        kind: kindDraft,
+        notes: notesDraft,
+        tags: parseTags(tagsDraft),
+      };
+
+      const response = await fetch('/api/network/labels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || `Label save failed with HTTP ${response.status}`);
+      }
+
+      const saved = payload.label ?? {
+        label: '',
+        trustState: 'unknown',
+        kind: selectedDevice.kind,
+        notes: '',
+        tags: [],
+        updatedAt: null,
+      };
+
+      setInventory((current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          devices: current.devices.map((device) => {
+            if (device.deviceKey !== selectedDevice.deviceKey) return device;
+            const nextKind = saved.kind || device.kind;
+            const nextLabel = saved.label || '';
+            return {
+              ...device,
+              label: nextLabel,
+              displayName: nextLabel || device.hostname || device.mac || device.ip,
+              trustState: saved.trustState || 'unknown',
+              kind: nextKind,
+              notes: saved.notes || '',
+              tags: Array.isArray(saved.tags) ? saved.tags : [],
+              labelUpdatedAt: saved.updatedAt ?? null,
+            };
+          }),
+        };
+      });
+
+      setSaveMessage('Saved');
+    } catch (err) {
+      setError(err?.message ?? 'Failed to save device label');
+    } finally {
+      setSaving(false);
+    }
+  }, [kindDraft, labelDraft, notesDraft, selectedDevice, tagsDraft, trustDraft]);
+
   const devices = inventory?.devices ?? [];
   const unknownCount = devices.filter((device) => getDeviceScore(device) > 0).length;
   const routerCount = devices.filter((device) => device.kind === 'router/gateway').length;
+  const trustedCount = devices.filter((device) => device.trustState === 'trusted').length;
+  const watchCount = devices.filter((device) => device.trustState === 'watch' || device.trustState === 'blocked').length;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-neutral-950 text-neutral-100" data-testid="home-network-inventory">
@@ -150,14 +275,18 @@ export default function NetworkTopologyApp() {
         </div>
       </header>
 
-      <section className="grid grid-cols-2 gap-3 border-b border-neutral-800 p-4 md:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 border-b border-neutral-800 p-4 md:grid-cols-5">
         <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-3">
           <div className="text-xs uppercase tracking-wide text-neutral-500">Devices</div>
           <div className="mt-1 text-2xl font-semibold">{inventory?.count ?? '—'}</div>
         </div>
         <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-3">
-          <div className="text-xs uppercase tracking-wide text-neutral-500">Routers</div>
-          <div className="mt-1 text-2xl font-semibold">{routerCount}</div>
+          <div className="text-xs uppercase tracking-wide text-neutral-500">Trusted</div>
+          <div className="mt-1 text-2xl font-semibold">{trustedCount}</div>
+        </div>
+        <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-3">
+          <div className="text-xs uppercase tracking-wide text-neutral-500">Watch</div>
+          <div className="mt-1 text-2xl font-semibold">{watchCount}</div>
         </div>
         <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-3">
           <div className="text-xs uppercase tracking-wide text-neutral-500">Unknown Signals</div>
@@ -166,7 +295,7 @@ export default function NetworkTopologyApp() {
         <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-3">
           <div className="text-xs uppercase tracking-wide text-neutral-500">Mode</div>
           <div className="mt-1 text-sm font-semibold">{inventory?.scanMode ?? 'loading'}</div>
-          <div className="mt-1 text-xs text-neutral-500">{inventory?.elapsedMs ? `${inventory.elapsedMs}ms` : '—'}</div>
+          <div className="mt-1 text-xs text-neutral-500">{inventory?.elapsedMs ? `${inventory.elapsedMs}ms` : `${routerCount} router-ish`}</div>
         </div>
       </section>
 
@@ -176,7 +305,7 @@ export default function NetworkTopologyApp() {
         </div>
       )}
 
-      <main className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden p-4 lg:grid-cols-[minmax(320px,420px)_1fr]">
+      <main className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden p-4 lg:grid-cols-[minmax(340px,440px)_1fr]">
         <section className="min-h-0 overflow-auto rounded-xl border border-neutral-800 bg-neutral-950/60 p-3" data-testid="network-device-list">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold">Discovered devices</h3>
@@ -211,7 +340,95 @@ export default function NetworkTopologyApp() {
               <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
                 <div className="text-xs uppercase tracking-wide text-neutral-500">Selected</div>
                 <div className="mt-1 text-xl font-semibold">{formatDeviceName(selectedDevice)}</div>
-                <div className="mt-1 text-sm text-neutral-400">{KIND_LABELS[selectedDevice.kind] || selectedDevice.kind}</div>
+                <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                  <span className="rounded-full border border-neutral-700 px-2 py-1 text-neutral-300">{KIND_LABELS[selectedDevice.kind] || selectedDevice.kind}</span>
+                  <span className={`rounded-full border px-2 py-1 ${TRUST_CLASSES[selectedDevice.trustState || 'unknown'] || TRUST_CLASSES.unknown}`}>
+                    {TRUST_LABELS[selectedDevice.trustState || 'unknown']}
+                  </span>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4" data-testid="network-device-label-editor">
+                <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                  <Tags size={16} />
+                  Label this device
+                </div>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <label className="text-sm md:col-span-2">
+                    <span className="mb-1 block text-xs uppercase tracking-wide text-neutral-500">Friendly name</span>
+                    <input
+                      value={labelDraft}
+                      onChange={(e) => setLabelDraft(e.target.value)}
+                      placeholder="Deco living room, PS5, garage camera…"
+                      className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                      data-testid="network-label-input"
+                    />
+                  </label>
+
+                  <label className="text-sm">
+                    <span className="mb-1 block text-xs uppercase tracking-wide text-neutral-500">Trust</span>
+                    <select
+                      value={trustDraft}
+                      onChange={(e) => setTrustDraft(e.target.value)}
+                      className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                      data-testid="network-trust-select"
+                    >
+                      {TRUST_OPTIONS.map((option) => (
+                        <option key={option} value={option}>{TRUST_LABELS[option]}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="text-sm">
+                    <span className="mb-1 block text-xs uppercase tracking-wide text-neutral-500">Kind</span>
+                    <select
+                      value={kindDraft}
+                      onChange={(e) => setKindDraft(e.target.value)}
+                      className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                      data-testid="network-kind-select"
+                    >
+                      {KIND_OPTIONS.map((option) => (
+                        <option key={option} value={option}>{KIND_LABELS[option]}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="text-sm md:col-span-2">
+                    <span className="mb-1 block text-xs uppercase tracking-wide text-neutral-500">Tags</span>
+                    <input
+                      value={tagsDraft}
+                      onChange={(e) => setTagsDraft(e.target.value)}
+                      placeholder="iot, camera, kids, infra"
+                      className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                      data-testid="network-tags-input"
+                    />
+                  </label>
+
+                  <label className="text-sm md:col-span-2">
+                    <span className="mb-1 block text-xs uppercase tracking-wide text-neutral-500">Notes</span>
+                    <textarea
+                      value={notesDraft}
+                      onChange={(e) => setNotesDraft(e.target.value)}
+                      placeholder="Where it lives, who owns it, why it matters…"
+                      className="min-h-20 w-full rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                      data-testid="network-notes-input"
+                    />
+                  </label>
+                </div>
+
+                <div className="mt-3 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={saveDeviceLabel}
+                    disabled={saving}
+                    className="inline-flex items-center gap-2 rounded-lg border border-emerald-700 bg-emerald-950/70 px-3 py-2 text-sm text-emerald-100 hover:bg-emerald-900 disabled:opacity-50"
+                    data-testid="network-save-label"
+                  >
+                    <Save size={16} />
+                    {saving ? 'Saving…' : 'Save label'}
+                  </button>
+                  {saveMessage && <span className="text-sm text-emerald-300">{saveMessage}</span>}
+                </div>
               </div>
 
               <dl className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -228,12 +445,12 @@ export default function NetworkTopologyApp() {
                   <dd className="mt-1 text-sm">{selectedDevice.hostname || 'not resolved'}</dd>
                 </div>
                 <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-3">
-                  <dt className="text-xs uppercase tracking-wide text-neutral-500">Source</dt>
-                  <dd className="mt-1 text-sm">{selectedDevice.source}</dd>
+                  <dt className="text-xs uppercase tracking-wide text-neutral-500">Device Key</dt>
+                  <dd className="mt-1 break-all font-mono text-sm">{selectedDevice.deviceKey}</dd>
                 </div>
                 <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-3">
-                  <dt className="text-xs uppercase tracking-wide text-neutral-500">ARP Type</dt>
-                  <dd className="mt-1 text-sm">{selectedDevice.arpType || 'n/a'}</dd>
+                  <dt className="text-xs uppercase tracking-wide text-neutral-500">Source</dt>
+                  <dd className="mt-1 text-sm">{selectedDevice.source}</dd>
                 </div>
                 <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-3">
                   <dt className="text-xs uppercase tracking-wide text-neutral-500">Last Seen</dt>
@@ -244,7 +461,7 @@ export default function NetworkTopologyApp() {
               <div className="rounded-xl border border-amber-900/60 bg-amber-950/20 p-4 text-sm text-amber-100">
                 <div className="font-semibold">Operator note</div>
                 <p className="mt-1 text-amber-100/80">
-                  This v0 does not fingerprint vendors or open ports. Unknown devices are candidates for labeling later, not proof of compromise.
+                  Trust labels are local notes only. They do not block traffic or modify your network.
                 </p>
               </div>
             </div>
