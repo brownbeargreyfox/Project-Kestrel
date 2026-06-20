@@ -10,6 +10,7 @@ const execFileAsync = promisify(execFile);
 const router = Router();
 const STATE_DIR = path.resolve(process.cwd(), '.kestrel');
 const LABELS_FILE = path.join(STATE_DIR, 'network-device-labels.json');
+const HISTORY_FILE = path.join(STATE_DIR, 'network-device-history.json');
 const TRUST_STATES = new Set(['trusted', 'unknown', 'watch', 'blocked']);
 const DEVICE_KINDS = new Set([
   'router/gateway',
@@ -57,6 +58,11 @@ function getDeviceKey(device) {
   return `ip:${device.ip}`;
 }
 
+function getMacPrefix(mac) {
+  if (!mac) return null;
+  return mac.split(':').slice(0, 3).join(':');
+}
+
 function sanitizeText(value, maxLength) {
   if (typeof value !== 'string') return '';
   return value.trim().slice(0, maxLength);
@@ -83,9 +89,9 @@ function sanitizeLabelPatch(body) {
   };
 }
 
-async function readLabels() {
+async function readJsonFile(filePath) {
   try {
-    const raw = await fs.readFile(LABELS_FILE, 'utf8');
+    const raw = await fs.readFile(filePath, 'utf8');
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === 'object' ? parsed : {};
   } catch (error) {
@@ -94,9 +100,25 @@ async function readLabels() {
   }
 }
 
-async function writeLabels(labels) {
+async function writeJsonFile(filePath, value) {
   await fs.mkdir(STATE_DIR, { recursive: true });
-  await fs.writeFile(LABELS_FILE, `${JSON.stringify(labels, null, 2)}\n`, 'utf8');
+  await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+async function readLabels() {
+  return readJsonFile(LABELS_FILE);
+}
+
+async function writeLabels(labels) {
+  return writeJsonFile(LABELS_FILE, labels);
+}
+
+async function readHistory() {
+  return readJsonFile(HISTORY_FILE);
+}
+
+async function writeHistory(history) {
+  return writeJsonFile(HISTORY_FILE, history);
 }
 
 function applyLabels(devices, labels) {
@@ -107,6 +129,7 @@ function applyLabels(devices, labels) {
     return {
       ...device,
       deviceKey,
+      macPrefix: getMacPrefix(device.mac),
       label: label?.label ?? '',
       displayName: label?.label || device.hostname || device.mac || device.ip,
       trustState: label?.trustState ?? 'unknown',
@@ -116,6 +139,42 @@ function applyLabels(devices, labels) {
       kind: labelKind ?? device.kind,
     };
   });
+}
+
+function applyAndUpdateHistory(devices, history) {
+  const now = new Date().toISOString();
+  const nextHistory = { ...history };
+
+  const nextDevices = devices.map((device) => {
+    const deviceKey = device.deviceKey ?? getDeviceKey(device);
+    const existing = nextHistory[deviceKey] ?? {};
+    const firstSeen = existing.firstSeen ?? now;
+    const seenCount = Number.isFinite(existing.seenCount) ? existing.seenCount + 1 : 1;
+    const acknowledgedAt = existing.acknowledgedAt ?? null;
+
+    nextHistory[deviceKey] = {
+      firstSeen,
+      lastSeen: now,
+      seenCount,
+      acknowledgedAt,
+      lastIp: device.ip,
+      lastMac: device.mac,
+      lastHostname: device.hostname,
+      lastDisplayName: device.displayName,
+      lastKind: device.kind,
+    };
+
+    return {
+      ...device,
+      firstSeen,
+      lastSeen: now,
+      seenCount,
+      acknowledgedAt,
+      isNew: !acknowledgedAt,
+    };
+  });
+
+  return { devices: nextDevices, history: nextHistory };
 }
 
 function getLocalInterfaces() {
@@ -154,7 +213,6 @@ function parseArpTable(output) {
     let mac = null;
     let type = 'arp';
 
-    // Windows: 192.168.1.1           aa-bb-cc-dd-ee-ff     dynamic
     const win = line.match(/\b(\d+\.\d+\.\d+\.\d+)\s+([0-9a-fA-F-]{17})\s+(\w+)/);
     if (win) {
       ip = win[1];
@@ -162,14 +220,12 @@ function parseArpTable(output) {
       type = win[3]?.toLowerCase() ?? 'arp';
     }
 
-    // macOS/BSD: ? (192.168.1.1) at aa:bb:cc:dd:ee:ff on en0 ifscope [ethernet]
     const bsd = line.match(/\((\d+\.\d+\.\d+\.\d+)\)\s+at\s+([0-9a-fA-F:]{17})/);
     if (!ip && bsd) {
       ip = bsd[1];
       mac = cleanMac(bsd[2]);
     }
 
-    // Linux ip neigh-ish arp output: 192.168.1.1 ether aa:bb:cc:dd:ee:ff ...
     const nix = line.match(/\b(\d+\.\d+\.\d+\.\d+)\b.*\b([0-9a-fA-F:]{17})\b/);
     if (!ip && nix) {
       ip = nix[1];
@@ -306,6 +362,34 @@ router.post('/labels', async (req, res) => {
   }
 });
 
+router.post('/devices/acknowledge', async (req, res) => {
+  try {
+    const keys = Array.isArray(req.body?.keys)
+      ? req.body.keys.map((key) => sanitizeText(key, 96)).filter(Boolean)
+      : [sanitizeText(req.body?.key, 96)].filter(Boolean);
+
+    if (keys.length === 0) {
+      return res.status(400).json({ ok: false, error: 'No device keys provided' });
+    }
+
+    const history = await readHistory();
+    const acknowledgedAt = new Date().toISOString();
+
+    for (const key of keys) {
+      if (!/^(mac:([0-9a-f]{2}:){5}[0-9a-f]{2}|ip:\d+\.\d+\.\d+\.\d+)$/.test(key)) continue;
+      history[key] = {
+        ...(history[key] ?? { firstSeen: acknowledgedAt, seenCount: 0 }),
+        acknowledgedAt,
+      };
+    }
+
+    await writeHistory(history);
+    return res.json({ ok: true, acknowledgedAt, keys, history });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message ?? 'Failed to acknowledge devices' });
+  }
+});
+
 router.get('/devices', async (req, res) => {
   const startedAt = Date.now();
   const scanMode = req.query.scan === 'ping' ? 'ping' : 'passive';
@@ -338,6 +422,9 @@ router.get('/devices', async (req, res) => {
 
     await enrichHostnames(devices);
     devices = applyLabels(devices, await readLabels());
+    const historyResult = applyAndUpdateHistory(devices, await readHistory());
+    devices = historyResult.devices;
+    await writeHistory(historyResult.history);
 
     devices.sort((a, b) => ipToNumber(a.ip) - ipToNumber(b.ip));
 
@@ -348,6 +435,7 @@ router.get('/devices', async (req, res) => {
       elapsedMs: Date.now() - startedAt,
       interfaces,
       count: devices.length,
+      newCount: devices.filter((device) => device.isNew).length,
       devices,
       safety: {
         mode: scanMode === 'ping' ? 'bounded-icmp-ping-sweep' : 'passive-arp-cache',
