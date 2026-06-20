@@ -1,6 +1,6 @@
 // src/core/EventBus.ts
-// Enhanced EventBus with schema registration de‑duplication, JSON schema validation (Ajv),
-// and a bounded in‑memory event log for diagnostics.
+// Enhanced EventBus with schema registration de-duplication, JSON schema validation (Ajv),
+// and a bounded in-memory event log for diagnostics.
 
 import Ajv, { ValidateFunction } from 'ajv';
 import addFormats from 'ajv-formats';
@@ -9,7 +9,7 @@ import type { EventPayload, EventSchema } from '../Types/plugin';
 export class EventBusImpl {
   private listeners = new Map<string, Set<(payload: EventPayload) => void>>();
 
-  // We de‑dupe using a key of `${name}@${version}` so repeated calls do not spam logs
+  // We de-dupe using a key of `${name}@${version}` so repeated calls do not spam logs
   private schemaKeys = new Set<string>();
   private schemaValidators = new Map<string, ValidateFunction>();
 
@@ -41,14 +41,17 @@ export class EventBusImpl {
     }
   }
 
-  /** Register (name, version, jsonSchema). Safe to call multiple times; duplicates are ignored. */
+  /** Register (name, version, jsonSchema/payloadSchema). Safe to call multiple times; duplicates are ignored. */
   registerSchema(schema: EventSchema): void {
     if (!schema || typeof schema !== 'object') {
       throw new Error('registerSchema: invalid schema object');
     }
-    const { name, version, jsonSchema } = schema as { name: string; version: string; jsonSchema: any };
+
+    const { name, version } = schema as { name: string; version: string };
+    const jsonSchema = (schema as any).jsonSchema ?? (schema as any).payloadSchema;
+
     if (!name || !version || !jsonSchema) {
-      throw new Error('registerSchema: schema must include name, version, and jsonSchema');
+      throw new Error('registerSchema: schema must include name, version, and jsonSchema or payloadSchema');
     }
 
     const key = `${name}@${version}`;
@@ -62,7 +65,7 @@ export class EventBusImpl {
     this.schemaKeys.add(key);
 
     // Developer signal for visibility while avoiding repeated prints
-    // Only log on first‑time registration
+    // Only log on first-time registration
     console.log(`Event schema registered: ${name}@${version}`);
   }
 
@@ -82,7 +85,7 @@ export class EventBusImpl {
     };
   }
 
-  /** Emit event with optional dev‑time schema validation and bounded logging. */
+  /** Emit event with optional dev-time schema validation and bounded logging. */
   emit(event: string, payload: EventPayload): void {
     // Bounded log for diagnostics
     this.eventLog.push({ timestamp: Date.now(), event, payload });
