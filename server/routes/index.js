@@ -4,6 +4,7 @@ import metrics from './metrics.js';
 import alerts from './alerts.js';
 import simulations from './simulations.js';
 import services from './services.js';
+import network from './network.js';
 
 const router = Router();
 
@@ -13,5 +14,6 @@ router.use('/metrics', metrics);
 router.use('/alerts', alerts);
 router.use('/simulations', simulations);
 router.use('/services', services);
+router.use('/network', network);
 
 export default router;
