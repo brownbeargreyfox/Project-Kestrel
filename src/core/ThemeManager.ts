@@ -1,5 +1,5 @@
 // src/core/ThemeManager.ts - Missing ThemeManager module
-import { ThemeTokens } from '../Types/plugin';
+import type { ThemeTokens } from '../Types/plugin';
 
 export const DEFAULT_THEME_TOKENS: ThemeTokens = {
   colors: {

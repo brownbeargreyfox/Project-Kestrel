@@ -4,6 +4,36 @@
 import { create } from 'zustand';
 import type { ComponentType } from 'react';
 
+export interface Toast {
+  id: string;
+  type: string;
+  title: string;
+  message: string;
+  duration?: number;
+}
+
+export interface ConfirmationConfig {
+  title: string;
+  message: string;
+  variant?: 'danger' | 'warning' | 'info';
+  confirmText?: string;
+  cancelText?: string;
+  onConfirm: () => void;
+  onCancel?: () => void;
+}
+
+export const TOAST_TYPES = {
+  INFO: 'info',
+  SUCCESS: 'success',
+  WARNING: 'warning',
+  ERROR: 'error',
+} as const;
+
+let toastIdCounter = 0;
+export function createToast(type: string, title: string, message: string, duration = 5000): Toast {
+  return { id: `toast-${++toastIdCounter}`, type, title, message, duration };
+}
+
 export type WorkspaceId = string;
 
 export interface OSWindow {
@@ -30,6 +60,16 @@ export interface UIState {
 
   // Launcher state
   launcherOpen: boolean;
+
+  // Toast notifications
+  toasts: Toast[];
+  addToast: (toast: Toast) => void;
+  removeToast: (id: string) => void;
+
+  // Confirmation dialog
+  confirmation: ConfirmationConfig | null;
+  showConfirmation: (config: ConfirmationConfig) => void;
+  hideConfirmation: () => void;
 
   // Spawn/close/minimize
   spawnWindow: (w: Partial<OSWindow> & { id: string; title: string }) => void;
@@ -67,6 +107,26 @@ export const useUIStore = create<UIState>((set, get) => ({
   osFocusedId: null,
   activeWorkspace: 'default',
   launcherOpen: false,
+  toasts: [],
+  confirmation: null,
+
+  // --- Toasts / Confirmation ---
+  addToast: (toast) =>
+    set((state) => {
+      const duration = toast.duration ?? 5000;
+      if (duration > 0) {
+        window.setTimeout(() => get().removeToast(toast.id), duration);
+      }
+      return { toasts: [...state.toasts, toast] };
+    }),
+
+  removeToast: (id) =>
+    set((state) => ({
+      toasts: state.toasts.filter((toast) => toast.id !== id),
+    })),
+
+  showConfirmation: (config) => set({ confirmation: config }),
+  hideConfirmation: () => set({ confirmation: null }),
 
   // --- Spawning / Closing / Minimizing ---
   spawnWindow: (w) =>
@@ -182,90 +242,90 @@ export const useUIStore = create<UIState>((set, get) => ({
   openLauncher: () => set({ launcherOpen: true }),
   closeLauncher: () => set({ launcherOpen: false }),
 
-launchApp: async (appId) => {
-  const S = get();
+  launchApp: async (appId) => {
+    const S = get();
 
-  // Close the launcher overlay first
-  set({ launcherOpen: false });
+    // Close the launcher overlay first
+    set({ launcherOpen: false });
 
-  // ---- Single-instance behavior (default) ----
-  // If a window for this app already exists anywhere, focus it instead of spawning another.
-  const existing = S.osWindows.find(w => w.appId === appId);
-  if (existing) {
-    if (S.activeWorkspace !== existing.workspace) {
-      set({ activeWorkspace: existing.workspace });
-    }
-    get().focusWindow(existing.id); // also unminimizes & bumps z
-    return;
-  }
-
-  try {
-    // Load from the registry
-    const mod = await import('/src/components/os/apps/AppRegistry');
-    type RegistryEntry = {
-      title: string;
-      component?: any;
-      loader?: () => Promise<any>;
-      import?: () => Promise<any>;
-      w?: number; h?: number;
-      // optional override to allow duplicates
-      multiInstance?: boolean;
-    };
-    const AppRegistry = (mod as any).AppRegistry as Record<string, RegistryEntry>;
-    const app = AppRegistry?.[appId];
-
-    if (!app) {
-      console.warn(`[launchApp] No app registered for id "${appId}"`);
+    // ---- Single-instance behavior (default) ----
+    // If a window for this app already exists anywhere, focus it instead of spawning another.
+    const existing = S.osWindows.find(w => w.appId === appId);
+    if (existing) {
+      if (S.activeWorkspace !== existing.workspace) {
+        set({ activeWorkspace: existing.workspace });
+      }
+      get().focusWindow(existing.id); // also unminimizes & bumps z
       return;
     }
 
-    // Resolve component via any of the supported fields
-    let Component = app.component;
-    if (!Component && app.loader) {
-      const loaded = await app.loader();
-      Component = loaded?.default ?? loaded;
-    }
-    if (!Component && app.import) {
-      const m = await app.import();
-      Component = m?.default ?? m;
-    }
-    if (!Component) {
-      console.warn(`[launchApp] App "${appId}" has no component/loader/import`);
-      return;
-    }
+    try {
+      // Load from the registry
+      const mod = await import('/src/components/os/apps/AppRegistry');
+      type RegistryEntry = {
+        title: string;
+        component?: any;
+        loader?: () => Promise<any>;
+        import?: () => Promise<any>;
+        w?: number; h?: number;
+        // optional override to allow duplicates
+        multiInstance?: boolean;
+      };
+      const AppRegistry = (mod as any).AppRegistry as Record<string, RegistryEntry>;
+      const app = AppRegistry?.[appId];
 
-    // If an app explicitly opts into multi-instance, we allow duplicates
-    const allowMulti = !!app.multiInstance;
-
-    // Stable id for single-instance, unique for multi-instance
-    const windowId = allowMulti ? `${appId}-${Date.now()}` : `app:${appId}`;
-
-    // (Extra guard) if single-instance id somehow exists, just focus it
-    if (!allowMulti) {
-      const already = get().osWindows.find(w => w.id === windowId);
-      if (already) {
-        if (S.activeWorkspace !== already.workspace) set({ activeWorkspace: already.workspace });
-        get().focusWindow(already.id);
+      if (!app) {
+        console.warn(`[launchApp] No app registered for id "${appId}"`);
         return;
       }
-    }
 
-    const { title, w = 800, h = 600 } = app;
-    get().spawnWindow({
-      id: windowId,
-      appId,
-      title,
-      x: 72,
-      y: 72,
-      w,
-      h,
-      workspace: get().activeWorkspace,
-      Component,
-    });
-  } catch (e) {
-    console.error('[launchApp] failed', e);
-  }
-},
+      // Resolve component via any of the supported fields
+      let Component = app.component;
+      if (!Component && app.loader) {
+        const loaded = await app.loader();
+        Component = loaded?.default ?? loaded;
+      }
+      if (!Component && app.import) {
+        const m = await app.import();
+        Component = m?.default ?? m;
+      }
+      if (!Component) {
+        console.warn(`[launchApp] App "${appId}" has no component/loader/import`);
+        return;
+      }
+
+      // If an app explicitly opts into multi-instance, we allow duplicates
+      const allowMulti = !!app.multiInstance;
+
+      // Stable id for single-instance, unique for multi-instance
+      const windowId = allowMulti ? `${appId}-${Date.now()}` : `app:${appId}`;
+
+      // (Extra guard) if single-instance id somehow exists, just focus it
+      if (!allowMulti) {
+        const already = get().osWindows.find(w => w.id === windowId);
+        if (already) {
+          if (S.activeWorkspace !== already.workspace) set({ activeWorkspace: already.workspace });
+          get().focusWindow(already.id);
+          return;
+        }
+      }
+
+      const { title, w = 800, h = 600 } = app;
+      get().spawnWindow({
+        id: windowId,
+        appId,
+        title,
+        x: 72,
+        y: 72,
+        w,
+        h,
+        workspace: get().activeWorkspace,
+        Component,
+      });
+    } catch (e) {
+      console.error('[launchApp] failed', e);
+    }
+  },
 
 }));
 

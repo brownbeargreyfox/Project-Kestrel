@@ -2,43 +2,39 @@
 // Central System Instance - Intelligently combines both evolution systems
 
 import { createDynamicEnterpriseSystem } from '../data/dynamicServerEvolution';
-import { 
+import {
   ApplicationTopologyManager,
   SERVER_PERSONALITIES,
   assignServerPersonalities,
   IncidentInjectionAPI,
-  HistoricalReplayManager
+  HistoricalReplayManager,
 } from '../data/nextLevelServerFeatures';
 
-// Import your existing mock data - adjust path as needed
-import { mockServerData } from '../data/mockServerData'; 
-// OR if it's structured differently:
-// import mockData from '../data/mockData';
-// import { initialServerData } from '../data/initialData';
+import { mockServerData } from '../data/mockserverdata';
 
 // Enhanced System Wrapper that combines both evolution systems
 class EnhancedSystemWrapper {
   constructor(mockData) {
     // Initialize the core evolution system (predictive analytics, auto-healing, contextual intelligence)
     this.evolutionSystem = createDynamicEnterpriseSystem(mockData);
-    
+
     // Assign server personalities from nextLevelServerFeatures
     this.serversWithPersonalities = assignServerPersonalities(mockData.serverOverview || []);
     this.evolutionSystem.serverOverview = this.serversWithPersonalities;
-    
+
     // Initialize application topology manager (from nextLevelServerFeatures)
     this.topologyManager = new ApplicationTopologyManager(
       mockData.applications || [],
       this.serversWithPersonalities
     );
     this.topologyManager.initialize();
-    
-    // Initialize advanced incident injection API (from nextLevelServerFeatures)  
+
+    // Initialize advanced incident injection API (from nextLevelServerFeatures)
     this.advancedIncidentAPI = new IncidentInjectionAPI(this.evolutionSystem);
-    
+
     // Initialize historical replay manager (from nextLevelServerFeatures)
     this.historyManager = new HistoricalReplayManager(1000);
-    
+
     // Set up evolution callback to capture historical data
     this.setupHistoricalCapture();
   }
@@ -54,13 +50,13 @@ class EnhancedSystemWrapper {
           systemHealth,
           applicationHealth
         );
-        
+
         // Call user callback if provided
         if (userCallback) {
           userCallback(servers, systemHealth, applicationHealth, metadata);
         }
       };
-      
+
       // Use the evolution system's original method
       if (typeof originalCallback === 'function') {
         originalCallback.call(this.evolutionSystem, enhancedCallback);
@@ -130,13 +126,13 @@ class EnhancedSystemWrapper {
     return {
       applications: Array.from(this.topologyManager.applications.entries()).map(([name, app]) => ({
         name,
-        ...app
+        ...app,
       })),
       dependencyGraph: Array.from(this.topologyManager.dependencyGraph.entries()).map(([name, deps]) => ({
         name,
-        ...deps
+        ...deps,
       })),
-      serviceDiscoveryRules: this.topologyManager.serviceDiscoveryRules
+      serviceDiscoveryRules: this.topologyManager.serviceDiscoveryRules,
     };
   }
 
@@ -178,11 +174,11 @@ class EnhancedSystemWrapper {
   getServerPersonalities() {
     return {
       personalities: SERVER_PERSONALITIES,
-      assignedPersonalities: this.serversWithPersonalities.map(server => ({
+      assignedPersonalities: this.serversWithPersonalities.map((server) => ({
         serverId: server.id,
         serverName: server.name,
-        personality: server.personality
-      }))
+        personality: server.personality,
+      })),
     };
   }
 
@@ -211,7 +207,7 @@ class EnhancedSystemWrapper {
       totalEvents: this.historyManager.evolutionHistory.length,
       oldestSnapshot: this.historyManager.metricSnapshots[0]?.timestamp,
       newestSnapshot: this.historyManager.metricSnapshots[this.historyManager.metricSnapshots.length - 1]?.timestamp,
-      availableMetrics: ['cpu', 'memory', 'network', 'health', 'businessLoad']
+      availableMetrics: ['cpu', 'memory', 'network', 'health', 'businessLoad'],
     };
   }
 
@@ -240,31 +236,31 @@ class EnhancedSystemWrapper {
         predictiveAnalytics: true,
         autoHealing: true,
         contextualIntelligence: true,
-        businessAwareness: true
+        businessAwareness: true,
       },
       topology: {
         applicationAwareness: true,
         dependencyTracking: true,
         serviceDiscovery: true,
-        dynamicNodeResolution: true
+        dynamicNodeResolution: true,
       },
       incidents: {
         advancedScenarios: true,
         phasedExecution: true,
         businessImpactCalculation: true,
-        autoHealing: true
+        autoHealing: true,
       },
       personalities: {
         behavioralFingerprints: true,
         typeBasedAssignment: true,
-        performanceVariation: true
+        performanceVariation: true,
       },
       historical: {
         deltaCompression: true,
         trendAnalysis: true,
         eventTimeline: true,
-        dataExport: true
-      }
+        dataExport: true,
+      },
     };
   }
 
@@ -276,12 +272,12 @@ class EnhancedSystemWrapper {
       lastUpdate: this.lastEvolutionUpdate,
       serverCount: (this.serverOverview || []).length,
       applicationCount: this.topologyManager.applications.size,
-      activeIncidentCount: this.getActiveIncidents().length
+      activeIncidentCount: this.getActiveIncidents().length,
     };
   }
 }
 
-// Create the enhanced system instance using your existing mock data
+// Create the enhanced system instance using existing mock data
 const systemWrapper = new EnhancedSystemWrapper(mockServerData);
 
 const initializeServiceDiscoveryRules = () => {
@@ -292,14 +288,14 @@ const initializeServiceDiscoveryRules = () => {
     'order-api-01', 'order-api-02', 'notification-queue',
     'analytics-app-01', 'data-warehouse-01', 'etl-worker-01',
     'etl-worker-02', 'reporting-cache', 'admin-web-01',
-    'admin-api-01', 'audit-db', 'admin-cache'
+    'admin-api-01', 'audit-db', 'admin-cache',
   ];
   // Add default service discovery rules to prevent warnings
-  services.forEach(service => {
+  services.forEach((service) => {
     try {
       systemWrapper?.addServiceDiscovery?.(
         service,
-        server => server.name?.includes(service) || server.id?.includes(service),
+        (server) => server.name?.includes(service) || server.id?.includes(service),
         'default-fallback'
       );
     } catch (error) {

@@ -1,35 +1,43 @@
+// src/Types/os.types.ts
+// Shared OS shell app/manifest types used by the launcher and registry.
+
+import type { ComponentType, FC } from 'react';
+
 export type KestrelPermission =
   | 'ui:window'
   | 'events:publish'
   | 'events:subscribe'
   | 'data:metrics.read'
-  | 'data:recommendations.read' 
+  | 'data:recommendations.read'
   | 'data:alerts.read'
-  | 'data:topology.read'        // For network topology
-  | 'data:incidents.read'       // For incident data
-  | 'aida:agent.access'         // For AIDA intelligence features
-  | 'maia:memory.read'          // For MAIA memory access
-  | 'maia:memory.write';        // For MAIA memory storage
+  | 'data:topology.read'
+  | 'data:incidents.read'
+  | 'aida:agent.access'
+  | 'maia:memory.read'
+  | 'maia:memory.write'
+  | string;
 
 export interface AppManifest {
   id: string;
   title: string;
-  icon?: React.ComponentType<any>;
+  icon?: ComponentType<any>;
   permissions: KestrelPermission[];
-  mount: () => Promise<{ default: React.FC }>;
+  mount?: () => Promise<{ default: FC }> | Promise<any> | any;
 }
 
 // OS Window type - ensure it supports our widget apps
 export interface OSWindow {
   id: string;
-  appId: string;
+  appId?: string;
   title: string;
   x: number;
   y: number;
-  w: number; 
+  w: number;
   h: number;
   z: number;
-  workspace: number;
+  workspace: string;
   minimized: boolean;
-  Component?: React.FC;
+  isMaximized?: boolean;
+  opacity?: number;
+  Component?: ComponentType<any>;
 }
