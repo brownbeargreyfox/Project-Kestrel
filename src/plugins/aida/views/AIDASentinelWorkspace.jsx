@@ -93,6 +93,66 @@ function DeltaBadge({ value, unit = '%', invert = false }) {
   return <span className={`font-mono text-sm font-semibold ${cls}`}>{fmt(value)}{unit}</span>;
 }
 
+// Inline dismiss modal — avoids window.prompt, keeps focus in the UI
+function DismissModal({ rec, reason, onReasonChange, onConfirm, onCancel, busy }) {
+  const textareaRef = React.useRef(null);
+  React.useEffect(() => { textareaRef.current?.focus(); }, []);
+
+  const handleKey = (e) => {
+    if (e.key === 'Escape') onCancel();
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) onConfirm();
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      onKeyDown={handleKey}
+      onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}
+    >
+      <div className="w-full max-w-md rounded-xl border border-neutral-700 bg-neutral-900 shadow-2xl">
+        <div className="border-b border-neutral-800 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="font-semibold text-neutral-100">Dismiss recommendation</div>
+              <div className="mt-0.5 text-sm text-neutral-400 line-clamp-2">{rec.title}</div>
+            </div>
+            <button onClick={onCancel} className="text-xl leading-none text-neutral-500 hover:text-neutral-300">×</button>
+          </div>
+        </div>
+        <div className="space-y-3 p-4">
+          <p className="text-xs text-neutral-400">
+            Dismissal is recorded as a reflection signal and refines future recommendations.
+            A reason helps AIDA learn faster, but is optional.
+          </p>
+          <textarea
+            ref={textareaRef}
+            value={reason}
+            onChange={(e) => onReasonChange(e.target.value)}
+            placeholder="Reason for dismissal (optional)…"
+            rows={3}
+            className="w-full resize-none rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-600 focus:border-neutral-500 focus:outline-none"
+          />
+          <div className="text-[11px] text-neutral-600">Ctrl+Enter to confirm · Esc to cancel</div>
+        </div>
+        <div className="flex justify-end gap-2 border-t border-neutral-800 p-4">
+          <button
+            onClick={onCancel} disabled={busy}
+            className="rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 text-sm text-neutral-300 hover:bg-neutral-800 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm} disabled={busy}
+            className="inline-flex items-center gap-2 rounded-lg border border-red-900 bg-red-950/60 px-4 py-2 text-sm text-red-200 hover:bg-red-900/60 disabled:opacity-50"
+          >
+            {busy ? 'Dismissing…' : 'Dismiss'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // AI Narrative sub-component — lazy, per-recommendation
 function NarrativeButton({ recId }) {
   const [state, setState] = React.useState('idle'); // idle | loading | done | error | unavailable
@@ -156,6 +216,7 @@ export default function AIDASentinelWorkspace() {
   const [busyId, setBusyId] = React.useState(null);
   const [notice, setNotice] = React.useState(null);
   const [dataMode, setDataMode] = React.useState(null); // { mode, agentCount, message }
+  const [pendingDismiss, setPendingDismiss] = React.useState(null); // { rec, reason }
 
   // Simulate pillar state
   const [simAssetId, setSimAssetId] = React.useState('');
@@ -259,9 +320,13 @@ export default function AIDASentinelWorkspace() {
     } finally { setBusyId(null); }
   };
 
-  const dismissRec = async (rec) => {
-    const reason = window.prompt(`Dismiss "${rec.title}". Reason (recorded as a reflection signal):`, '');
-    if (reason === null) return;
+  const dismissRec = (rec) => {
+    setPendingDismiss({ rec, reason: '' });
+  };
+
+  const confirmDismiss = async () => {
+    if (!pendingDismiss) return;
+    const { rec, reason } = pendingDismiss;
     setBusyId(rec.id);
     setNotice(null);
     try {
@@ -277,9 +342,11 @@ export default function AIDASentinelWorkspace() {
       });
       setReflections((prev) => [data.reflection, ...prev]);
       setRecs((prev) => prev.filter((r) => r.id !== rec.id));
+      setPendingDismiss(null);
       setNotice({ type: 'ok', text: 'Dismissed — recorded as a reflection signal.' });
     } catch (err) {
       setNotice({ type: 'err', text: err?.message ?? 'Dismiss failed' });
+      setPendingDismiss(null);
     } finally { setBusyId(null); }
   };
 
@@ -310,6 +377,16 @@ export default function AIDASentinelWorkspace() {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-neutral-950 text-neutral-100" data-testid="aida-sentinel-app">
+      {pendingDismiss && (
+        <DismissModal
+          rec={pendingDismiss.rec}
+          reason={pendingDismiss.reason}
+          onReasonChange={(r) => setPendingDismiss((prev) => prev && { ...prev, reason: r })}
+          onConfirm={confirmDismiss}
+          onCancel={() => setPendingDismiss(null)}
+          busy={busyId === pendingDismiss.rec.id}
+        />
+      )}
       <header className="border-b border-neutral-800 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
