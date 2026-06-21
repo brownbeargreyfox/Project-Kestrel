@@ -30,6 +30,7 @@ function StatusPill({ enabled, reachable }) {
 export default function AIProvidersApp() {
   const [providers, setProviders] = React.useState([]);
   const [status, setStatus] = React.useState(null);
+  const [brokerStatus, setBrokerStatus] = React.useState(null);
   const [models, setModels] = React.useState([]);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState(null);
@@ -39,20 +40,27 @@ export default function AIProvidersApp() {
     setError(null);
 
     try {
-      const [providerResponse, statusResponse] = await Promise.all([
+      const [providerResponse, statusResponse, brokerResponse] = await Promise.all([
         fetch('/api/ai/providers'),
         fetch('/api/ai/ollama/status'),
+        fetch('/api/ai/broker/status'),
       ]);
 
       const providerPayload = await providerResponse.json();
       const statusPayload = await statusResponse.json();
+      const brokerPayload = await brokerResponse.json();
 
       if (!providerResponse.ok || !providerPayload.ok) {
         throw new Error(providerPayload.error || `Provider load failed with HTTP ${providerResponse.status}`);
       }
 
+      if (!brokerResponse.ok || !brokerPayload.ok) {
+        throw new Error(brokerPayload.error || `Broker load failed with HTTP ${brokerResponse.status}`);
+      }
+
       setProviders(providerPayload.providers ?? []);
       setStatus(statusPayload);
+      setBrokerStatus(brokerPayload);
 
       if (statusPayload.enabled && statusPayload.reachable) {
         const modelsResponse = await fetch('/api/ai/ollama/models');
@@ -124,7 +132,7 @@ export default function AIProvidersApp() {
             <StatusPill enabled={status?.enabled} reachable={status?.reachable} />
           </div>
 
-          <dl className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <dl className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">
             <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
               <dt className="text-xs uppercase tracking-wide text-neutral-500">Base URL</dt>
               <dd className="mt-1 break-all font-mono text-sm">{status?.baseUrl || ollamaProvider?.baseUrl || 'unknown'}</dd>
@@ -136,6 +144,11 @@ export default function AIProvidersApp() {
             <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
               <dt className="text-xs uppercase tracking-wide text-neutral-500">Default Model</dt>
               <dd className="mt-1 text-sm">{ollamaProvider?.defaultModel || 'not set'}</dd>
+            </div>
+            <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+              <dt className="text-xs uppercase tracking-wide text-neutral-500">Broker</dt>
+              <dd className="mt-1 text-sm">{brokerStatus?.enabled ? 'enabled' : 'disabled'}</dd>
+              <dd className="mt-1 text-xs text-neutral-500">{brokerStatus?.audit || 'not loaded'}</dd>
             </div>
           </dl>
 
@@ -171,9 +184,11 @@ export default function AIProvidersApp() {
 
           <div className="mt-4 rounded-lg border border-neutral-800 bg-neutral-950 p-3 text-sm text-neutral-400">
             Server env:
-            <pre className="mt-2 overflow-auto rounded bg-neutral-900 p-3 text-xs text-neutral-300">{`KESTREL_OLLAMA_ENABLED=true
+            <pre className="mt-2 overflow-auto rounded bg-neutral-900 p-3 text-xs text-neutral-300">{`KESTREL_AI_BROKER_ENABLED=true
+KESTREL_OLLAMA_ENABLED=true
 KESTREL_OLLAMA_BASE_URL=http://127.0.0.1:11434
-KESTREL_OLLAMA_MODEL=llama3.2`}</pre>
+KESTREL_OLLAMA_MODEL=llama3.2
+KESTREL_OLLAMA_ALLOWED_MODELS=llama3.2`}</pre>
           </div>
         </section>
       </main>
