@@ -1,42 +1,45 @@
 // src/components/os/apps/AidaSentinelApp.jsx
 //
 // AIDA Sentinel — operator cockpit for the sentinel-class advisory system.
-// Five constitutional pillars: Observe / Recommend / Memory / Reflect.
-//
-// Guardrails made visible: AIDA advises, never executes. Accepting a
-// recommendation creates a pending action intent that a human must approve
-// in the Capability Center. Confidence is always shown as a range.
+// Five pillars: Observe / Recommend / Memory / Simulate / Reflect
 
 import React from 'react';
 import {
   Activity, Brain, Eye, Lightbulb, History, RefreshCw, ShieldAlert,
-  CheckCircle2, XCircle, GitBranch, FlaskConical, Gauge,
+  CheckCircle2, XCircle, GitBranch, FlaskConical, Gauge, Wand2,
+  PlayCircle, ArrowRightLeft,
 } from 'lucide-react';
 import { useMAIAStore } from '../../../store/useMAIAStore';
 
 const SEVERITY_CLASSES = {
   critical: 'border-red-800 bg-red-950/70 text-red-200',
-  high: 'border-orange-800 bg-orange-950/70 text-orange-200',
-  medium: 'border-amber-800 bg-amber-950/70 text-amber-200',
-  low: 'border-emerald-800 bg-emerald-950/70 text-emerald-200',
+  high:     'border-orange-800 bg-orange-950/70 text-orange-200',
+  medium:   'border-amber-800 bg-amber-950/70 text-amber-200',
+  low:      'border-emerald-800 bg-emerald-950/70 text-emerald-200',
 };
 
 const STATUS_DOT = {
-  online: 'bg-emerald-400',
-  warning: 'bg-amber-400',
-  critical: 'bg-red-500',
-  offline: 'bg-red-600',
-  maintenance: 'bg-sky-400',
+  online: 'bg-emerald-400', warning: 'bg-amber-400',
+  critical: 'bg-red-500', offline: 'bg-red-600', maintenance: 'bg-sky-400',
 };
 
+const SCENARIOS = [
+  { key: 'restart',    label: 'Controlled restart',  description: 'Reclaim leaked memory, clear incident. Brief downtime.' },
+  { key: 'scale-out', label: 'Scale out tier',       description: 'Add capacity to share load — reduces pressure on this node.' },
+  { key: 'drain',     label: 'Drain & maintenance',  description: 'Gracefully remove from rotation, reducing downstream pressure.' },
+  { key: 'patch',     label: 'Patch & recycle',      description: 'Apply pending patches then restart — resolves software-level incidents.' },
+];
+
 const PILLARS = [
-  { id: 'observe',   label: 'Observe',    icon: Eye },
-  { id: 'recommend', label: 'Recommend',  icon: Lightbulb },
-  { id: 'memory',    label: 'Memory',     icon: Brain },
-  { id: 'reflect',   label: 'Reflect',    icon: History },
+  { id: 'observe',    label: 'Observe',    icon: Eye },
+  { id: 'recommend',  label: 'Recommend',  icon: Lightbulb },
+  { id: 'simulate',   label: 'Simulate',   icon: PlayCircle },
+  { id: 'memory',     label: 'Memory',     icon: Brain },
+  { id: 'reflect',    label: 'Reflect',    icon: History },
 ];
 
 function pct(n) { return `${Number(n || 0).toFixed(1)}%`; }
+function fmt(v) { return typeof v === 'number' ? (v > 0 ? `+${v}` : `${v}`) : v; }
 function formatDate(value) { if (!value) return '—'; return new Date(value).toLocaleString(); }
 
 function RiskBar({ value }) {
@@ -58,17 +61,13 @@ function ConfidenceRange({ confidence }) {
     <div className="space-y-1">
       <div className="flex items-center justify-between text-xs text-neutral-400">
         <span>Confidence</span>
-        <span className="font-mono text-neutral-200">
-          {mid}% <span className="text-neutral-500">({lo}–{hi}%)</span>
-        </span>
+        <span className="font-mono text-neutral-200">{mid}% <span className="text-neutral-500">({lo}–{hi}%)</span></span>
       </div>
       <div className="relative h-1.5 w-full rounded-full bg-neutral-800">
         <div className="absolute h-full rounded-full bg-sky-500/40" style={{ left: `${lo}%`, width: `${Math.max(2, hi - lo)}%` }} />
         <div className="absolute top-1/2 h-2.5 w-0.5 -translate-y-1/2 bg-sky-300" style={{ left: `${mid}%` }} />
       </div>
-      {confidence.lowCoverage && (
-        <div className="text-[11px] text-amber-300/90">⚠ Low historical coverage — wider uncertainty.</div>
-      )}
+      {confidence.lowCoverage && <div className="text-[11px] text-amber-300/90">⚠ Low historical coverage — wider uncertainty.</div>}
     </div>
   );
 }
@@ -87,6 +86,66 @@ function Empty({ children }) {
   return <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-4 text-sm text-neutral-400">{children}</div>;
 }
 
+function DeltaBadge({ value, unit = '%', invert = false }) {
+  if (value == null) return null;
+  const positive = invert ? value < 0 : value > 0;
+  const cls = positive ? 'text-emerald-300' : value === 0 ? 'text-neutral-400' : 'text-red-300';
+  return <span className={`font-mono text-sm font-semibold ${cls}`}>{fmt(value)}{unit}</span>;
+}
+
+// AI Narrative sub-component — lazy, per-recommendation
+function NarrativeButton({ recId }) {
+  const [state, setState] = React.useState('idle'); // idle | loading | done | error | unavailable
+  const [text, setText] = React.useState(null);
+
+  const fetch_ = async () => {
+    setState('loading');
+    try {
+      const res = await fetch(`/api/aida/recommendations/${recId}/narrate`);
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Narration failed');
+      if (data.brokerStatus === 'unavailable') {
+        setState('unavailable');
+        setText(data.message);
+      } else {
+        setState('done');
+        setText(data.narrative);
+      }
+    } catch (err) {
+      setState('error');
+      setText(err?.message ?? 'Narration failed');
+    }
+  };
+
+  if (state === 'idle') {
+    return (
+      <button
+        onClick={fetch_}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-sky-900 bg-sky-950/40 px-2.5 py-1 text-xs text-sky-300 hover:bg-sky-900/40"
+        title="Get AI-generated narrative via Ollama"
+      >
+        <Wand2 size={13} /> Get AI narrative
+      </button>
+    );
+  }
+
+  if (state === 'loading') {
+    return <span className="text-xs text-neutral-500 italic">Generating narrative…</span>;
+  }
+
+  return (
+    <div className="mt-2 rounded-lg border border-sky-900/40 bg-sky-950/20 p-3">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="text-[11px] font-medium text-sky-300">
+          {state === 'unavailable' ? '⚠ AI broker unavailable' : state === 'error' ? '✕ Error' : '✦ AIDA narrative'}
+        </span>
+        <button onClick={() => setState('idle')} className="text-[11px] text-neutral-500 hover:text-neutral-300">dismiss</button>
+      </div>
+      <p className={`text-xs whitespace-pre-wrap leading-relaxed ${state === 'done' ? 'text-sky-100' : 'text-amber-200/80'}`}>{text}</p>
+    </div>
+  );
+}
+
 export default function AidaSentinelApp() {
   const [pillar, setPillar] = React.useState('observe');
   const [observation, setObservation] = React.useState(null);
@@ -96,6 +155,13 @@ export default function AidaSentinelApp() {
   const [error, setError] = React.useState(null);
   const [busyId, setBusyId] = React.useState(null);
   const [notice, setNotice] = React.useState(null);
+
+  // Simulate pillar state
+  const [simAssetId, setSimAssetId] = React.useState('');
+  const [simScenario, setSimScenario] = React.useState('restart');
+  const [simResult, setSimResult] = React.useState(null);
+  const [simLoading, setSimLoading] = React.useState(false);
+  const [simError, setSimError] = React.useState(null);
 
   const recommendationLog = useMAIAStore((s) => s.recommendationLog);
   const insightMemory     = useMAIAStore((s) => s.insightMemory);
@@ -122,6 +188,10 @@ export default function AidaSentinelApp() {
       setObservation(obs.observation);
       setRecs(rec.recommendations || []);
       setReflections(ref.reflections || []);
+      // Seed the asset picker with the top at-risk asset
+      if (!simAssetId && obs.observation?.atRisk?.length) {
+        setSimAssetId(obs.observation.atRisk[0].id);
+      }
       if (obs.observation?.atRisk?.length) {
         const top = obs.observation.atRisk[0];
         pushInsight({
@@ -137,7 +207,7 @@ export default function AidaSentinelApp() {
     } finally {
       setLoading(false);
     }
-  }, [pushInsight]);
+  }, [pushInsight, simAssetId]);
 
   React.useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -146,8 +216,7 @@ export default function AidaSentinelApp() {
     setNotice(null);
     try {
       const res = await fetch(`/api/aida/recommendations/${rec.id}/accept`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ note: '' }),
       });
       const data = await res.json();
@@ -161,13 +230,11 @@ export default function AidaSentinelApp() {
         ts: Date.now(), actor: 'operator', action: 'accepted',
         text: `Accepted "${rec.title}" → pending approval as intent ${data.intent?.id?.slice(0, 8)}.`,
       });
-      setNotice({ type: 'ok', text: data.message || 'Accepted — pending human approval in Capability Center.' });
+      setNotice({ type: 'ok', text: data.message });
       setRecs((prev) => prev.filter((r) => r.id !== rec.id));
     } catch (err) {
       setNotice({ type: 'err', text: err?.message ?? 'Accept failed' });
-    } finally {
-      setBusyId(null);
-    }
+    } finally { setBusyId(null); }
   };
 
   const dismissRec = async (rec) => {
@@ -177,8 +244,7 @@ export default function AidaSentinelApp() {
     setNotice(null);
     try {
       const res = await fetch(`/api/aida/recommendations/${rec.id}/dismiss`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason }),
       });
       const data = await res.json();
@@ -192,12 +258,33 @@ export default function AidaSentinelApp() {
       setNotice({ type: 'ok', text: 'Dismissed — recorded as a reflection signal.' });
     } catch (err) {
       setNotice({ type: 'err', text: err?.message ?? 'Dismiss failed' });
-    } finally {
-      setBusyId(null);
-    }
+    } finally { setBusyId(null); }
+  };
+
+  const runSimulation = async () => {
+    if (!simAssetId) return;
+    setSimLoading(true);
+    setSimError(null);
+    setSimResult(null);
+    try {
+      const res = await fetch('/api/aida/simulate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assetId: simAssetId, scenario: simScenario }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Simulation failed');
+      setSimResult(data);
+      addDebateEntry({
+        ts: Date.now(), actor: 'aida', action: 'simulated',
+        text: `Simulated "${data.scenario.label}" on ${data.asset.name} → risk delta ${data.delta.riskReduction}%, health +${data.delta.healthImprovement}%.`,
+      });
+    } catch (err) {
+      setSimError(err?.message ?? 'Simulation failed');
+    } finally { setSimLoading(false); }
   };
 
   const health = observation?.systemHealth;
+  const allAssets = observation?.assets ?? [];
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-neutral-950 text-neutral-100" data-testid="aida-sentinel-app">
@@ -225,7 +312,7 @@ export default function AidaSentinelApp() {
 
         <div className="mt-3 flex items-center gap-2 rounded-lg border border-amber-900/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-200/90">
           <ShieldAlert size={14} />
-          Advisory only · Human-in-the-loop · No autonomous action. Accepting a recommendation creates a pending intent requiring approval.
+          Advisory only · Human-in-the-loop · No autonomous action. Accept creates a pending intent requiring approval.
         </div>
 
         <nav className="mt-3 flex flex-wrap gap-1" data-testid="aida-pillars">
@@ -233,13 +320,8 @@ export default function AidaSentinelApp() {
             const Icon = p.icon;
             const active = pillar === p.id;
             return (
-              <button
-                key={p.id} onClick={() => setPillar(p.id)}
-                className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm border ${
-                  active
-                    ? 'border-sky-700 bg-sky-950/60 text-sky-100'
-                    : 'border-neutral-800 bg-neutral-900 text-neutral-300 hover:bg-neutral-800'
-                }`}
+              <button key={p.id} onClick={() => setPillar(p.id)}
+                className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm border ${active ? 'border-sky-700 bg-sky-950/60 text-sky-100' : 'border-neutral-800 bg-neutral-900 text-neutral-300 hover:bg-neutral-800'}`}
                 data-testid={`aida-pillar-${p.id}`}
               >
                 <Icon size={15} />
@@ -253,27 +335,24 @@ export default function AidaSentinelApp() {
         </nav>
       </header>
 
-      {error && (
-        <div className="m-4 rounded-lg border border-red-900 bg-red-950/50 p-3 text-sm text-red-200" data-testid="aida-error">{error}</div>
-      )}
+      {error && <div className="m-4 rounded-lg border border-red-900 bg-red-950/50 p-3 text-sm text-red-200">{error}</div>}
       {notice && (
-        <div className={`mx-4 mt-4 rounded-lg border p-3 text-sm ${notice.type === 'ok' ? 'border-emerald-900 bg-emerald-950/40 text-emerald-200' : 'border-red-900 bg-red-950/40 text-red-200'}`} data-testid="aida-notice">
+        <div className={`mx-4 mt-4 rounded-lg border p-3 text-sm ${notice.type === 'ok' ? 'border-emerald-900 bg-emerald-950/40 text-emerald-200' : 'border-red-900 bg-red-950/40 text-red-200'}`}>
           {notice.text}
         </div>
       )}
 
       <main className="min-h-0 flex-1 overflow-auto p-4">
 
-        {/* OBSERVE */}
+        {/* ======================= OBSERVE ======================= */}
         {pillar === 'observe' && (
           <div className="space-y-4" data-testid="aida-observe">
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-              <HealthStat icon={Activity} label="Assets"   value={health?.totalAssets ?? '—'} tone="neutral" />
-              <HealthStat icon={Gauge}    label="Healthy"  value={health ? pct(health.healthyPct) : '—'} tone="ok" />
-              <HealthStat icon={ShieldAlert} label="Warning" value={health ? pct(health.warningPct) : '—'} tone="warn" />
-              <HealthStat icon={XCircle}  label="Critical" value={health ? pct(health.criticalPct) : '—'} tone="crit" />
+              <HealthStat icon={Activity}    label="Assets"   value={health?.totalAssets ?? '—'} tone="neutral" />
+              <HealthStat icon={Gauge}       label="Healthy"  value={health ? pct(health.healthyPct) : '—'} tone="ok" />
+              <HealthStat icon={ShieldAlert} label="Warning"  value={health ? pct(health.warningPct) : '—'} tone="warn" />
+              <HealthStat icon={XCircle}     label="Critical" value={health ? pct(health.criticalPct) : '—'} tone="crit" />
             </div>
-
             <section className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-2 font-semibold"><Eye size={17} /> At-risk assets</div>
@@ -315,7 +394,7 @@ export default function AidaSentinelApp() {
           </div>
         )}
 
-        {/* RECOMMEND */}
+        {/* ======================= RECOMMEND ======================= */}
         {pillar === 'recommend' && (
           <div className="space-y-3" data-testid="aida-recommend">
             {recs.length === 0 ? (
@@ -326,9 +405,7 @@ export default function AidaSentinelApp() {
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className={`rounded-full border px-2 py-0.5 text-[11px] uppercase tracking-wide ${SEVERITY_CLASSES[rec.severity] || SEVERITY_CLASSES.low}`}>
-                          {rec.severity}
-                        </span>
+                        <span className={`rounded-full border px-2 py-0.5 text-[11px] uppercase tracking-wide ${SEVERITY_CLASSES[rec.severity] || SEVERITY_CLASSES.low}`}>{rec.severity}</span>
                         <h3 className="font-semibold">{rec.title}</h3>
                       </div>
                       <div className="mt-0.5 text-xs text-neutral-500">{rec.assetName} · {rec.datacenter}</div>
@@ -374,18 +451,21 @@ export default function AidaSentinelApp() {
                     </div>
                   </details>
 
+                  {/* AI Narrative — lazy, per-recommendation */}
+                  <div className="mt-3">
+                    <NarrativeButton recId={rec.id} />
+                  </div>
+
                   <div className="mt-3 flex items-center gap-2">
                     <button
                       onClick={() => acceptRec(rec)} disabled={busyId === rec.id}
                       className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-800 bg-emerald-950/60 px-3 py-1.5 text-sm text-emerald-200 hover:bg-emerald-900/60 disabled:opacity-50"
-                      data-testid={`aida-accept-${rec.id}`}
                     >
                       <CheckCircle2 size={15} /> Accept → request approval
                     </button>
                     <button
                       onClick={() => dismissRec(rec)} disabled={busyId === rec.id}
                       className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800 disabled:opacity-50"
-                      data-testid={`aida-dismiss-${rec.id}`}
                     >
                       <XCircle size={15} /> Dismiss
                     </button>
@@ -397,7 +477,109 @@ export default function AidaSentinelApp() {
           </div>
         )}
 
-        {/* MEMORY */}
+        {/* ======================= SIMULATE ======================= */}
+        {pillar === 'simulate' && (
+          <div className="space-y-4" data-testid="aida-simulate">
+            <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
+              <div className="mb-3 flex items-center gap-2 font-semibold">
+                <PlayCircle size={17} /> What-if scenario planner
+                <span className="ml-auto rounded-full border border-amber-900/60 bg-amber-950/30 px-2 py-0.5 text-[11px] text-amber-200/90">
+                  model before meddle · no changes made
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs text-neutral-400">Asset to model</label>
+                  <select
+                    value={simAssetId}
+                    onChange={(e) => { setSimAssetId(e.target.value); setSimResult(null); }}
+                    className="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm"
+                  >
+                    {allAssets.map((a) => (
+                      <option key={a.id} value={a.id}>{a.name} ({a.type}) · risk {Math.round(a.risk * 100)}%</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-neutral-400">Scenario</label>
+                  <select
+                    value={simScenario}
+                    onChange={(e) => { setSimScenario(e.target.value); setSimResult(null); }}
+                    className="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm"
+                  >
+                    {SCENARIOS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <p className="mt-2 text-xs text-neutral-500">
+                {SCENARIOS.find((s) => s.key === simScenario)?.description}
+              </p>
+
+              <button
+                onClick={runSimulation} disabled={simLoading || !simAssetId}
+                className="mt-3 inline-flex items-center gap-2 rounded-lg border border-sky-800 bg-sky-950/50 px-4 py-2 text-sm text-sky-200 hover:bg-sky-900/50 disabled:opacity-50"
+              >
+                <PlayCircle size={15} className={simLoading ? 'animate-pulse' : ''} />
+                {simLoading ? 'Projecting…' : 'Run simulation'}
+              </button>
+            </div>
+
+            {simError && <div className="rounded-lg border border-red-900 bg-red-950/50 p-3 text-sm text-red-200">{simError}</div>}
+
+            {simResult && (
+              <div className="space-y-3">
+                <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
+                  <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
+                    <ArrowRightLeft size={16} className="text-sky-300" />
+                    Projected outcome: <span className="text-sky-200">{simResult.scenario.label}</span> on <span className="text-neutral-200">{simResult.asset.name}</span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3 text-center">
+                    <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+                      <div className="mb-1 text-[11px] text-neutral-500">Risk reduction</div>
+                      <DeltaBadge value={simResult.delta.riskReduction} unit="%" invert={false} />
+                    </div>
+                    <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+                      <div className="mb-1 text-[11px] text-neutral-500">System health</div>
+                      <DeltaBadge value={simResult.delta.healthImprovement} unit="%" invert={false} />
+                    </div>
+                    <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+                      <div className="mb-1 text-[11px] text-neutral-500">Cascade risk</div>
+                      <DeltaBadge value={simResult.delta.cascadeRiskReduction} unit="%" invert={false} />
+                    </div>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
+                    <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+                      <div className="mb-2 font-medium text-neutral-400">Before</div>
+                      <div>Asset risk: <span className="text-neutral-200 font-mono">{Math.round(simResult.before.assetRisk * 100)}%</span></div>
+                      <div className="mt-1">Status: <span className="text-neutral-200">{simResult.before.assetStatus}</span></div>
+                      <div className="mt-1">System healthy: <span className="text-neutral-200 font-mono">{simResult.before.systemHealthyPct}%</span></div>
+                      {simResult.before.activeRecommendation && (
+                        <div className="mt-1 text-amber-300/80">Active rec: {simResult.before.activeRecommendation.severity}</div>
+                      )}
+                    </div>
+                    <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+                      <div className="mb-2 font-medium text-neutral-400">After</div>
+                      <div>Asset risk: <span className="text-emerald-300 font-mono">{Math.round(simResult.after.assetRisk * 100)}%</span></div>
+                      <div className="mt-1">Status: <span className="text-emerald-300">{simResult.after.assetStatus}</span></div>
+                      <div className="mt-1">System healthy: <span className="text-emerald-300 font-mono">{simResult.after.systemHealthyPct}%</span></div>
+                      {simResult.before.dependentCount > 0 && (
+                        <div className="mt-1 text-neutral-400">{simResult.before.dependentCount} dependent(s) modeled</div>
+                      )}
+                    </div>
+                  </div>
+
+                  <p className="mt-3 text-[11px] text-neutral-600">{simResult.disclaimer}</p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ======================= MEMORY ======================= */}
         {pillar === 'memory' && (
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2" data-testid="aida-memory">
             <section className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
@@ -420,7 +602,6 @@ export default function AidaSentinelApp() {
                 </div>
               )}
             </section>
-
             <section className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
               <div className="mb-3 flex items-center gap-2 font-semibold"><History size={17} /> Insight & debate stream</div>
               {insightMemory.length === 0 && debateLog.length === 0 ? (
@@ -444,7 +625,7 @@ export default function AidaSentinelApp() {
           </div>
         )}
 
-        {/* REFLECT */}
+        {/* ======================= REFLECT ======================= */}
         {pillar === 'reflect' && (
           <section className="rounded-xl border border-neutral-800 bg-neutral-900 p-4" data-testid="aida-reflect">
             <div className="mb-3 flex items-center gap-2 font-semibold">
@@ -452,7 +633,7 @@ export default function AidaSentinelApp() {
               <span className="ml-auto text-xs text-neutral-500">{reflections.length} signal(s)</span>
             </div>
             <p className="mb-3 text-xs text-neutral-500">
-              Operator feedback is a first-class signal. Dismissals and outcomes are recorded here to refine future recommendations.
+              Operator feedback is a first-class signal. Dismissals and outcomes refine future recommendations.
             </p>
             {reflections.length === 0 ? (
               <Empty>No reflection signals yet. Dismiss a recommendation with a reason to record one.</Empty>
