@@ -54,7 +54,7 @@ export default function DesktopShell() {
         {/* Desktop / windows layer (beneath header) */}
         {/* Desktop / windows layer (between header and taskbar) */}
  		<div
-    	   className="absolute left-0 right-0 top-14 bottom-12 z-[200]"
+    	   className="absolute left-0 right-0 top-12 bottom-0 z-[200]"
 		   onContextMenu={onDesktopContext}
 		>
           <WindowManager />
