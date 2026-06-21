@@ -5,6 +5,7 @@ import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
 import routes from './routes/index.js';
+import { addClient, removeClient, broadcast } from './lib/eventBus.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -15,32 +16,25 @@ app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 if (NODE_ENV === 'development') app.use(morgan('dev'));
 
-// SSE hub
-const clients = new Set();
+// SSE hub — clients subscribe here, routes broadcast via eventBus
 app.get('/api/events', (req, res) => {
   res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'Access-Control-Allow-Origin': '*'
+    'Content-Type':                'text/event-stream',
+    'Cache-Control':               'no-cache',
+    'Connection':                  'keep-alive',
+    'Access-Control-Allow-Origin': '*',
   });
   res.write(`event: ready\n`);
   res.write(`data: ${JSON.stringify({ ok: true, ts: Date.now() })}\n\n`);
-  clients.add(res);
-  req.on('close', () => clients.delete(res));
+  addClient(res);
+  req.on('close', () => removeClient(res));
 });
-export function broadcast(event, data) {
-  for (const res of clients) {
-    try {
-      res.write(`event: ${event}\n`);
-      res.write(`data: ${JSON.stringify(data)}\n\n`);
-    } catch {}
-  }
-}
+
+// Re-export for any existing code that imports from here
+export { broadcast };
 
 app.use('/api', routes);
 
-// Serve frontend in production
 if (NODE_ENV === 'production') {
   const dist = path.join(__dirname, '..', 'dist');
   app.use(express.static(dist));

@@ -55,7 +55,8 @@ function stableId(...parts) {
 function scoreAsset(server, serverTypeIndex) {
   const metrics = server.metrics || {};
   const typeInfo = serverTypeIndex.get(server.type) || {};
-  const criticalityLevel = typeInfo.criticalityLevel || 'medium';
+  // server.criticality may be a level string set directly by liveState for real agents
+  const criticalityLevel = typeInfo.criticalityLevel || server.criticality || 'medium';
   const criticality = CRITICALITY_WEIGHT[criticalityLevel] ?? 0.6;
 
   const cpu = Number(metrics.cpuUsage) || 0;

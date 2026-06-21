@@ -155,6 +155,7 @@ export default function AidaSentinelApp() {
   const [error, setError] = React.useState(null);
   const [busyId, setBusyId] = React.useState(null);
   const [notice, setNotice] = React.useState(null);
+  const [dataMode, setDataMode] = React.useState(null); // { mode, agentCount, message }
 
   // Simulate pillar state
   const [simAssetId, setSimAssetId] = React.useState('');
@@ -174,20 +175,23 @@ export default function AidaSentinelApp() {
     setLoading(true);
     setError(null);
     try {
-      const [obsRes, recRes, refRes] = await Promise.all([
+      const [obsRes, recRes, refRes, modeRes] = await Promise.all([
         fetch('/api/aida/observe'),
         fetch('/api/aida/recommendations'),
         fetch('/api/aida/reflections?limit=25'),
+        fetch('/api/telemetry/mode'),
       ]);
-      const obs = await obsRes.json();
-      const rec = await recRes.json();
-      const ref = await refRes.json();
+      const obs  = await obsRes.json();
+      const rec  = await recRes.json();
+      const ref  = await refRes.json();
+      const mode = await modeRes.json().catch(() => null);
       if (!obsRes.ok || !obs.ok) throw new Error(obs.error || 'Failed to load observation');
       if (!recRes.ok || !rec.ok) throw new Error(rec.error || 'Failed to load recommendations');
       if (!refRes.ok || !ref.ok) throw new Error(ref.error || 'Failed to load reflections');
       setObservation(obs.observation);
       setRecs(rec.recommendations || []);
       setReflections(ref.reflections || []);
+      if (mode?.ok) setDataMode(mode);
       // Seed the asset picker with the top at-risk asset
       if (!simAssetId && obs.observation?.atRisk?.length) {
         setSimAssetId(obs.observation.atRisk[0].id);
@@ -210,6 +214,24 @@ export default function AidaSentinelApp() {
   }, [pushInsight, simAssetId]);
 
   React.useEffect(() => { loadAll(); }, [loadAll]);
+
+  // Subscribe to SSE telemetry.update so the Observe pillar refreshes automatically
+  // when a real agent reports without requiring a manual refresh click.
+  React.useEffect(() => {
+    const es = new EventSource('/api/events');
+    es.addEventListener('telemetry.update', () => {
+      // Only auto-refresh Observe to avoid disrupting in-progress interactions
+      fetch('/api/aida/observe')
+        .then((r) => r.json())
+        .then((d) => { if (d.ok) setObservation(d.observation); })
+        .catch(() => {});
+      fetch('/api/telemetry/mode')
+        .then((r) => r.json())
+        .then((d) => { if (d.ok) setDataMode(d); })
+        .catch(() => {});
+    });
+    return () => es.close();
+  }, []);
 
   const acceptRec = async (rec) => {
     setBusyId(rec.id);
@@ -310,9 +332,16 @@ export default function AidaSentinelApp() {
           </button>
         </div>
 
-        <div className="mt-3 flex items-center gap-2 rounded-lg border border-amber-900/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-200/90">
-          <ShieldAlert size={14} />
-          Advisory only · Human-in-the-loop · No autonomous action. Accept creates a pending intent requiring approval.
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-900/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-200/90">
+          <div className="flex items-center gap-2">
+            <ShieldAlert size={14} />
+            Advisory only · Human-in-the-loop · No autonomous action. Accept creates a pending intent requiring approval.
+          </div>
+          {dataMode && (
+            <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${dataMode.mode === 'live' ? 'border-emerald-800 bg-emerald-950/60 text-emerald-200' : 'border-neutral-700 bg-neutral-900 text-neutral-400'}`}>
+              {dataMode.mode === 'live' ? `● LIVE · ${dataMode.agentCount} agent${dataMode.agentCount !== 1 ? 's' : ''}` : '○ MOCK DATA'}
+            </span>
+          )}
         </div>
 
         <nav className="mt-3 flex flex-wrap gap-1" data-testid="aida-pillars">
