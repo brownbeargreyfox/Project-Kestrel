@@ -74,6 +74,19 @@ function safeArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+async function getUptimeSeconds() {
+  if (typeof si.time === 'function') {
+    try {
+      const time = await si.time();
+      return Math.round(asNumber(time?.uptime, os.uptime()));
+    } catch {
+      return Math.round(os.uptime());
+    }
+  }
+
+  return Math.round(os.uptime());
+}
+
 // ── metrics collection ────────────────────────────────────────────────────────
 
 async function collectMetrics(pingHost) {
@@ -145,7 +158,6 @@ async function report(config, agentId, osInfo) {
     return;
   }
 
-  const time   = await si.time().catch(() => ({ uptime: os.uptime() }));
   const payload = {
     agentId,
     hostname:    os.hostname(),
@@ -155,7 +167,7 @@ async function report(config, agentId, osInfo) {
     criticality: config.criticality,
     metrics,
     os:          osInfo,
-    uptime:      Math.round(time.uptime ?? os.uptime()),
+    uptime:      await getUptimeSeconds(),
     ts:          new Date().toISOString(),
   };
 
