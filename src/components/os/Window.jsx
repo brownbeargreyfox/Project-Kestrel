@@ -1,6 +1,7 @@
 // src/components/os/Window.jsx
 import React from 'react';
 import { useUIStore } from '../../store/useUIStore.ts';
+import ContextMenu from './ContextMenu.jsx';
 
 const WINDOWS_BASE_Z = 200;
 const MIN_WINDOW_W = 380;
@@ -9,11 +10,12 @@ const MIN_WINDOW_H = 240;
 export default function Window({ win, focused, children }) {
   const {
     focusWindow, commitMove, commitResize,
-    minimizeWindow, closeWindow, toggleMaximize, setOpacity
+    minimizeWindow, closeWindow, toggleMaximize, setOpacity, recoverWindow,
   } = useUIStore(s => s);
 
   const [dragging, setDragging] = React.useState(false);
   const [resizing, setResizing] = React.useState(false);
+  const [menu, setMenu] = React.useState(null);
   const [tx, setTx] = React.useState(0);
   const [ty, setTy] = React.useState(0);
   const [tw, setTw] = React.useState(win.w);
@@ -55,6 +57,13 @@ export default function Window({ win, focused, children }) {
     setTw(win.w);
     setTh(win.h);
     setResizing(true);
+  };
+
+  const onTitlebarContext = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    focusWindow(win.id);
+    setMenu({ x: e.clientX, y: e.clientY });
   };
 
   React.useEffect(() => {
@@ -119,6 +128,17 @@ export default function Window({ win, focused, children }) {
     backdropFilter: 'blur(6px)',
   };
 
+  const menuItems = [
+    { label: 'Move to Visible Area', action: () => recoverWindow(win.id) },
+    { label: win.isMaximized ? 'Restore' : 'Maximize', action: () => toggleMaximize(win.id) },
+    { label: 'Minimize', action: () => minimizeWindow(win.id) },
+    { separator: true },
+    { label: 'Opacity +', action: () => setOpacity(win.id, Math.min(1, (win.opacity ?? 1) + 0.1)) },
+    { label: 'Opacity −', action: () => setOpacity(win.id, Math.max(0.2, (win.opacity ?? 1) - 0.1)) },
+    { separator: true },
+    { label: 'Close', action: () => closeWindow(win.id), danger: true },
+  ];
+
   return (
     <div
       role="region"
@@ -136,12 +156,14 @@ export default function Window({ win, focused, children }) {
         className={`h-9 px-3 flex items-center justify-between select-none rounded-t-xl
                     ${win.isMaximized ? 'cursor-default' : 'cursor-move'} bg-neutral-800`}
         onMouseDown={onDragStart}
+        onContextMenu={onTitlebarContext}
       >
         <div className="font-medium truncate" data-testid={`window-title-${win.id}`}>{win.title ?? ''}</div>
         <div
           className="flex items-center gap-2"
           data-testid={`window-controls-${win.id}`}
           onMouseDown={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.stopPropagation()}
         >
           {/* Opacity quick controls */}
           <button
@@ -195,6 +217,15 @@ export default function Window({ win, focused, children }) {
           aria-hidden="true"
           data-testid={`window-resize-${win.id}`}
           onMouseDown={onResizeStart}
+        />
+      )}
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={menuItems}
+          onClose={() => setMenu(null)}
         />
       )}
     </div>
