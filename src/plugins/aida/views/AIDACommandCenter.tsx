@@ -6,7 +6,8 @@
 
 import React from 'react';
 import { useAIDAStore } from '../store/useAIDAStore';
-import { useAIDAStream } from '../hooks/useAIDAStream';
+import { useAIDABridge } from '../hooks/useAIDABridge';
+import { AIDAToastStack } from './AIDAToastStack';
 import type {
   AIDAConnectionState,
   AIDAAsset,
@@ -76,7 +77,7 @@ function AssetsCard({ assets }: { assets: AIDAAsset[] }) {
 
       {assets.length === 0 ? (
         <p style={{ fontSize: 12, color: '#475569', margin: 0 }}>
-          No assets received. Connect the WS stream to populate.
+          No assets detected. Waiting for server data…
         </p>
       ) : (
         <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -218,16 +219,18 @@ function SimulationCard({ sim }: { sim: SimulationResult | null }) {
 // ── main component ────────────────────────────────────────────────────────────
 
 export const AIDACommandCenter: React.FC = () => {
-  useAIDAStream();
+  useAIDABridge();
 
   const connectionState = useAIDAStore((s) => s.connectionState);
   const serverTime      = useAIDAStore((s) => s.serverTime);
   const lastError       = useAIDAStore((s) => s.lastError);
+  const dataMode        = useAIDAStore((s) => s.dataMode);
   const assets          = useAIDAStore((s) => Object.values(s.assets));
   const events          = useAIDAStore((s) => s.events);
   const lastSim         = useAIDAStore((s) => s.lastSim);
 
   return (
+    <>
     <div
       data-testid="aida-command-center"
       style={{
@@ -248,9 +251,25 @@ export const AIDACommandCenter: React.FC = () => {
           AIDA Command Center
         </h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          {dataMode !== null && (
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: '0.08em',
+                color: dataMode === 'live' ? '#34d399' : '#f59e0b',
+                background: dataMode === 'live' ? '#052e16' : '#1c1107',
+                border: `1px solid ${dataMode === 'live' ? '#14532d' : '#78350f'}`,
+                borderRadius: 4,
+                padding: '2px 6px',
+              }}
+            >
+              {dataMode === 'live' ? 'LIVE' : 'MOCK'}
+            </span>
+          )}
           {serverTime !== null && (
             <span style={{ fontSize: 11, color: '#475569' }}>
-              Server: {new Date(serverTime).toLocaleTimeString()}
+              {new Date(serverTime).toLocaleTimeString()}
             </span>
           )}
           <ConnectionBadge state={connectionState} />
@@ -277,6 +296,8 @@ export const AIDACommandCenter: React.FC = () => {
         Advisory only · Human-in-the-loop · No autonomous action
       </footer>
     </div>
+    <AIDAToastStack />
+    </>
   );
 };
 

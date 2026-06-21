@@ -264,20 +264,58 @@ function severityRank(sev) {
   return { critical: 4, high: 3, medium: 2, low: 1 }[sev] || 0;
 }
 
-export function buildRecommendations(observation) {
+export function buildRecommendations(observation, options = {}) {
+  const { reflections = [] } = options;
   const allAssets = observation.assets || [];
+
+  // Build dismissal index from operator reflection signals
+  const SUPPRESS_WINDOW_MS = 24 * 60 * 60 * 1000; // suppress for 24h after a dismissal
+  const now = Date.now();
+  const dismissalById = new Map();
+  for (const r of reflections) {
+    if (r.kind !== 'dismissal' || !r.recommendationId) continue;
+    const rts = new Date(r.ts).getTime();
+    const existing = dismissalById.get(r.recommendationId);
+    if (!existing) {
+      dismissalById.set(r.recommendationId, { count: 1, mostRecentTs: rts });
+    } else {
+      existing.count++;
+      if (rts > existing.mostRecentTs) existing.mostRecentTs = rts;
+    }
+  }
+
   const recs = [];
 
   for (const asset of observation.atRisk || []) {
     for (const rule of RULES) {
       if (!rule.matches(asset)) continue;
 
+      const recId = stableId(asset.id, rule.id);
+      const dismissal = dismissalById.get(recId);
+
+      // Suppress this recommendation if the operator dismissed it within the window
+      if (dismissal && (now - dismissal.mostRecentTs) < SUPPRESS_WINDOW_MS) break;
+
       const deps = computeDependencies(asset, allAssets);
-      const confidence = computeConfidence(asset);
+      let confidence = computeConfidence(asset);
+
+      // Reduce confidence for patterns dismissed repeatedly (visible learning signal)
+      if (dismissal && dismissal.count >= 3) {
+        const reduction = Math.min(0.25, 0.05 * (dismissal.count - 2));
+        confidence = {
+          ...confidence,
+          value: round(Math.max(0.30, confidence.value - reduction)),
+          low:   round(Math.max(0.20, confidence.low   - reduction)),
+          high:  round(Math.max(0.40, confidence.high  - reduction)),
+          basis: confidence.basis +
+            ` Confidence reduced: operator dismissed this pattern ${dismissal.count} time(s).`,
+        };
+      }
+
       const impactLabel = rule.severity === 'critical' ? 'High' : rule.severity === 'high' ? 'Medium-High' : 'Medium';
 
       recs.push({
-        id: stableId(asset.id, rule.id),
+        id: recId,
         ruleId: rule.id,
         assetId: asset.id,
         assetName: asset.name,

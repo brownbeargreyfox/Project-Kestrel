@@ -67,9 +67,10 @@ function currentObservation() {
   return buildObservation(getInfraState());
 }
 
-function findRecommendation(id) {
+async function findRecommendation(id) {
   const obs = currentObservation();
-  return buildRecommendations(obs).recommendations.find((r) => r.id === id) || null;
+  const reflections = await readJsonLines(REFLECTIONS_FILE, 500);
+  return buildRecommendations(obs, { reflections }).recommendations.find((r) => r.id === id) || null;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +117,8 @@ router.get('/observe', async (req, res) => {
 // ---------------------------------------------------------------------------
 router.get('/recommendations', async (req, res) => {
   const observation = currentObservation();
-  const result = buildRecommendations(observation);
+  const reflections = await readJsonLines(REFLECTIONS_FILE, 500);
+  const result = buildRecommendations(observation, { reflections });
   await writeAudit(req, {
     type: 'aida.recommend',
     capability: 'data:recommendations.read',
@@ -139,7 +141,7 @@ router.get('/recommendations', async (req, res) => {
 // ---------------------------------------------------------------------------
 router.get('/recommendations/:id/narrate', async (req, res) => {
   const id = sanitize(req.params.id, 64);
-  const rec = findRecommendation(id);
+  const rec = await findRecommendation(id);
   if (!rec) return res.status(404).json({ ok: false, error: 'Recommendation not found.' });
 
   const system = `You are AIDA, an infrastructure sentinel. Your role is to help operators understand exactly why an infrastructure issue is serious and what they should do about it. Be direct, precise, and cite the specific metrics. Maximum 3 short paragraphs.`;
@@ -190,7 +192,7 @@ Write a concise narrative (3 paragraphs max) explaining: (1) what is happening a
 router.post('/recommendations/:id/accept', async (req, res) => {
   const id = sanitize(req.params.id, 64);
   const note = sanitize(req.body?.note, 1000);
-  const rec = findRecommendation(id);
+  const rec = await findRecommendation(id);
   if (!rec) return res.status(404).json({ ok: false, error: 'Recommendation not found or no longer current.' });
 
   const intent = {
@@ -233,7 +235,7 @@ router.post('/recommendations/:id/accept', async (req, res) => {
 router.post('/recommendations/:id/dismiss', async (req, res) => {
   const id = sanitize(req.params.id, 64);
   const reason = sanitize(req.body?.reason, 1000) || 'No reason provided.';
-  const rec = findRecommendation(id);
+  const rec = await findRecommendation(id);
   if (!rec) return res.status(404).json({ ok: false, error: 'Recommendation not found or no longer current.' });
 
   const reflection = {

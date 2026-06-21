@@ -92,3 +92,11 @@ export interface AIDALayoutState {
   showWorkflowActions: boolean;
   useCanvas:          boolean;
 }
+
+export interface AIDAToast {
+  id:       string;
+  riskId:   string;
+  title:    string;
+  severity: RiskSeverity;
+  ts:       number;
+}

@@ -11,6 +11,7 @@ import type {
   AIDAConnectionState,
   AIDAFilterState,
   AIDALayoutState,
+  AIDAToast,
 } from '../../../Types/aida';
 
 // ── state shape ───────────────────────────────────────────────────────────────
@@ -32,6 +33,13 @@ interface AIDAState {
   risks:            Record<string, Risk>;
   lastRiskUpdateTs: number | null;
   selectedRiskId:   string | null;
+  seenRiskIds:      Record<string, true>;
+
+  // bridge
+  dataMode: 'live' | 'mock' | null;
+
+  // notifications
+  toasts: AIDAToast[];
 
   // ui
   filters: AIDAFilterState;
@@ -45,16 +53,21 @@ interface AIDAActions {
   setConnectionState(state: AIDAConnectionState): void;
   setServerTime(value: string | null): void;
   setLastError(error: string | null): void;
+  setDataMode(mode: 'live' | 'mock' | null): void;
   ingestEvent(event: AIDAEvent): void;
   updateAsset(id: string, asset: AIDAAsset): void;
+  setAssets(assets: AIDAAsset[]): void;
   setLastSim(result: SimulationResult | null): void;
   upsertRisk(risk: Risk): void;
   upsertRisks(risks: Risk[]): void;
   removeRisk(riskId: string): void;
+  markRisksSeen(ids: string[]): void;
   setSelectedRisk(riskId: string | null): void;
   setFilters(filters: Partial<AIDAFilterState>): void;
   setLayout(layout: Partial<AIDALayoutState>): void;
   clearSelection(): void;
+  pushToast(toast: Omit<AIDAToast, 'id'>): void;
+  dismissToast(id: string): void;
   getRiskArray(): Risk[];
   getRiskById(id: string): Risk | undefined;
 }
@@ -76,6 +89,7 @@ export const useAIDAStore = create<AIDAStore>()((set, get) => ({
   connectionState: 'idle',
   serverTime:      null,
   lastError:       null,
+  dataMode:        null,
   events:          [],
   assets:          {},
   lastSim:         null,
@@ -83,6 +97,8 @@ export const useAIDAStore = create<AIDAStore>()((set, get) => ({
   risks:           {},
   lastRiskUpdateTs: null,
   selectedRiskId:  null,
+  seenRiskIds:     {},
+  toasts:          [],
   filters: {
     severity: 'all',
     type:     'all',
@@ -96,10 +112,11 @@ export const useAIDAStore = create<AIDAStore>()((set, get) => ({
   },
 
   // ── connection ───────────────────────────────────────────────────────────
-  setWsConnected:    (ok) => set({ wsConnected: ok }),
+  setWsConnected:    (ok)    => set({ wsConnected: ok }),
   setConnectionState:(state) => set({ connectionState: state }),
   setServerTime:     (value) => set({ serverTime: value }),
   setLastError:      (error) => set({ lastError: error }),
+  setDataMode:       (mode)  => set({ dataMode: mode }),
 
   // ── events ───────────────────────────────────────────────────────────────
   ingestEvent: (event) =>
@@ -110,6 +127,13 @@ export const useAIDAStore = create<AIDAStore>()((set, get) => ({
   // ── assets ───────────────────────────────────────────────────────────────
   updateAsset: (id, asset) =>
     set((s) => ({ assets: { ...s.assets, [id]: asset } })),
+
+  setAssets: (assets) =>
+    set(() => {
+      const m: Record<string, AIDAAsset> = {};
+      for (const a of assets) m[a.id] = a;
+      return { assets: m };
+    }),
 
   // ── simulation ───────────────────────────────────────────────────────────
   setLastSim: (result) => set({ lastSim: result }),
@@ -143,6 +167,26 @@ export const useAIDAStore = create<AIDAStore>()((set, get) => ({
   // ── selection ────────────────────────────────────────────────────────────
   setSelectedRisk: (riskId) => set({ selectedRiskId: riskId }),
   clearSelection:  ()       => set({ selectedRiskId: null }),
+
+  // ── seen-risk tracking ───────────────────────────────────────────────────
+  markRisksSeen: (ids) =>
+    set((s) => {
+      const next = { ...s.seenRiskIds };
+      for (const id of ids) next[id] = true;
+      return { seenRiskIds: next };
+    }),
+
+  // ── toasts ───────────────────────────────────────────────────────────────
+  pushToast: (toast) =>
+    set((s) => ({
+      toasts: [
+        { ...toast, id: `toast-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` },
+        ...s.toasts,
+      ].slice(0, 5),
+    })),
+
+  dismissToast: (id) =>
+    set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 
   // ── filters / layout ─────────────────────────────────────────────────────
   setFilters: (filters) =>
