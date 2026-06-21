@@ -2,7 +2,8 @@
 // Enhanced EventBus with schema registration de-duplication, JSON schema validation (Ajv),
 // and a bounded in-memory event log for diagnostics.
 
-import Ajv, { ValidateFunction } from 'ajv';
+import Ajv from 'ajv';
+import type { ValidateFunction } from 'ajv';
 import addFormats from 'ajv-formats';
 import type { EventPayload, EventSchema } from '../Types/plugin';
 

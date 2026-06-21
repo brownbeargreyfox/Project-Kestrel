@@ -17,7 +17,6 @@
     "noImplicitOverride": true,
     "noPropertyAccessFromIndexSignature": true,
     "noFallthroughCasesInSwitch": true,
-    "importsNotUsedAsValues": "error",
     "verbatimModuleSyntax": true,
 
     /* Build perf & DX */
