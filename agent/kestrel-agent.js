@@ -26,7 +26,7 @@
 import si          from 'systeminformation';
 import os          from 'os';
 import { randomUUID } from 'crypto';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -61,6 +61,19 @@ function getOrCreateAgentId() {
   return id;
 }
 
+function asNumber(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function safeArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
 // ── metrics collection ────────────────────────────────────────────────────────
 
 async function collectMetrics(pingHost) {
@@ -75,42 +88,50 @@ async function collectMetrics(pingHost) {
 
   // CPU
   const cpuUsage = loadRes.status === 'fulfilled'
-    ? Math.round(loadRes.value.currentLoad * 10) / 10
+    ? Math.round(asNumber(loadRes.value?.currentLoad) * 10) / 10
     : 0;
 
   // Memory
   let memoryUsage = 0;
-  if (memRes.status === 'fulfilled' && memRes.value.total > 0) {
-    memoryUsage = Math.round((memRes.value.used / memRes.value.total) * 1000) / 10;
+  if (memRes.status === 'fulfilled' && asNumber(memRes.value?.total) > 0) {
+    memoryUsage = Math.round((asNumber(memRes.value?.used) / asNumber(memRes.value?.total)) * 1000) / 10;
   }
 
   // Disk — largest physical volume (excludes tmpfs/devfs on Linux)
   let diskUsage = 0;
   if (disksRes.status === 'fulfilled') {
-    const physical = disksRes.value.filter(
-      (d) => d.size > 1e9 && !d.fs?.startsWith('tmpfs') && !d.fs?.startsWith('devfs'),
+    const physical = safeArray(disksRes.value).filter(
+      (d) => asNumber(d?.size) > 1e9 && !d?.fs?.startsWith('tmpfs') && !d?.fs?.startsWith('devfs'),
     );
     if (physical.length > 0) {
-      const primary = physical.reduce((a, b) => (a.size > b.size ? a : b));
-      diskUsage = Math.round(primary.use * 10) / 10;
+      const primary = physical.reduce((a, b) => (asNumber(a?.size) > asNumber(b?.size) ? a : b));
+      diskUsage = Math.round(asNumber(primary?.use) * 10) / 10;
     }
   }
 
-  // Disk I/O (reads + writes per second)
+  // Disk I/O (reads + writes per second). systeminformation can return null on
+  // some Windows builds or non-admin sessions; missing I/O should not block ingest.
   let storageIO = 0;
-  if (ioRes.status === 'fulfilled') {
-    storageIO = Math.round((ioRes.value.rIO_sec ?? 0) + (ioRes.value.wIO_sec ?? 0));
+  if (ioRes.status === 'fulfilled' && ioRes.value && typeof ioRes.value === 'object') {
+    storageIO = Math.round(asNumber(ioRes.value.rIO_sec) + asNumber(ioRes.value.wIO_sec));
   }
 
   // Active network connections
-  const connections = connsRes.status === 'fulfilled' ? connsRes.value.length : 0;
+  const connections = connsRes.status === 'fulfilled' ? safeArray(connsRes.value).length : 0;
 
   // Network latency (ICMP to pingHost)
   const networkLatency = latRes.status === 'fulfilled' && latRes.value != null
-    ? Math.round(latRes.value)
+    ? Math.round(asNumber(latRes.value))
     : 0;
 
-  return { cpuUsage, memoryUsage, diskUsage, storageIO, connections, networkLatency };
+  return {
+    cpuUsage: clamp(cpuUsage, 0, 100),
+    memoryUsage: clamp(memoryUsage, 0, 100),
+    diskUsage: clamp(diskUsage, 0, 100),
+    storageIO,
+    connections,
+    networkLatency,
+  };
 }
 
 // ── report ────────────────────────────────────────────────────────────────────
