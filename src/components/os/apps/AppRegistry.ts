@@ -1,7 +1,7 @@
 // src/components/os/apps/AppRegistry.ts
 // Unified app registry compatible with useUIStore.launchApp (component | loader | import)
 
-import { Terminal, Shield, Activity, Folder, BellRing, Globe, Bell, Plug, Bot } from 'lucide-react';
+import { Terminal, Shield, Activity, Folder, BellRing, Globe, Bell, Plug, Bot, ShieldCheck } from 'lucide-react';
 import type { AppManifest } from '../../../Types/os.types';
 import type { ComponentType } from 'react';
 
@@ -119,6 +119,16 @@ export const AppRegistry: Record<string, KestrelApp> = {
     import: () => import('./AIProvidersApp.jsx'),
     mount: () => import('./AIProvidersApp.jsx'),
     w: 980, h: 680,
+  },
+
+  'capability-center': {
+    id: 'capability-center',
+    title: 'Capability Center',
+    icon: ShieldCheck,
+    permissions: ['ui:window', 'events:subscribe', 'audit:events.read'],
+    import: () => import('./CapabilityCenterApp.jsx'),
+    mount: () => import('./CapabilityCenterApp.jsx'),
+    w: 1120, h: 760,
   },
 
   // === LEGACY COMPATIBILITY ===
