@@ -84,6 +84,8 @@ export interface UIState {
   // Geometry
   commitMove: (id: string, x: number, y: number) => void;
   commitResize: (id: string, w: number, h: number) => void;
+  recoverWindow: (id: string) => void;
+  recoverWindows: () => void;
 
   // Window controls
   toggleMaximize: (id: string) => void;
@@ -98,8 +100,43 @@ export interface UIState {
   launchApp: (appId: string) => Promise<void>;
 }
 
+const DESKTOP_HEADER_H = 56;
+const DESKTOP_TASKBAR_H = 48;
+const DESKTOP_EDGE_GAP = 8;
+const WINDOW_TITLEBAR_H = 36;
+const MIN_VISIBLE_WINDOW_W = 160;
+
 function clamp(v: number, min: number, max: number) {
   return Math.max(min, Math.min(max, v));
+}
+
+function getDesktopBounds() {
+  if (typeof window === 'undefined') {
+    return { width: 1280, height: 720 };
+  }
+
+  return {
+    width: Math.max(320, window.innerWidth),
+    height: Math.max(240, window.innerHeight - DESKTOP_HEADER_H - DESKTOP_TASKBAR_H),
+  };
+}
+
+function clampWindowPosition(x: number, y: number, w = 720, h = 480) {
+  const bounds = getDesktopBounds();
+  const maxX = Math.max(DESKTOP_EDGE_GAP, bounds.width - Math.min(MIN_VISIBLE_WINDOW_W, Math.max(80, w)));
+  const maxY = Math.max(DESKTOP_EDGE_GAP, bounds.height - WINDOW_TITLEBAR_H);
+
+  return {
+    x: clamp(Number.isFinite(x) ? x : DESKTOP_EDGE_GAP, DESKTOP_EDGE_GAP, maxX),
+    y: clamp(Number.isFinite(y) ? y : DESKTOP_EDGE_GAP, DESKTOP_EDGE_GAP, maxY),
+    w,
+    h,
+  };
+}
+
+function cascadePosition(index: number) {
+  const step = 32;
+  return clampWindowPosition(72 + index * step, 72 + index * step);
 }
 
 export const useUIStore = create<UIState>((set, get) => ({
@@ -137,23 +174,28 @@ export const useUIStore = create<UIState>((set, get) => ({
       const exists = state.osWindows.some((win) => win.id === w.id);
 
       if (exists) {
-        // Focus existing window with same id
+        // Focus existing window with same id and pull it back into reach if needed.
         return {
           osFocusedId: w.id,
-          osWindows: state.osWindows.map((win) =>
-            win.id === w.id ? { ...win, minimized: false, z: nextZ } : win
-          ),
+          osWindows: state.osWindows.map((win) => {
+            if (win.id !== w.id) return win;
+            const next = clampWindowPosition(win.x, win.y, win.w, win.h);
+            return { ...win, x: next.x, y: next.y, minimized: false, z: nextZ };
+          }),
         };
       }
 
+      const width = clamp(w.w ?? 720, 360, 4096);
+      const height = clamp(w.h ?? 480, 240, 4096);
+      const pos = clampWindowPosition(w.x ?? 120, w.y ?? 120, width, height);
       const win: OSWindow = {
         id: w.id,
         appId: w.appId,
         title: w.title,
-        x: w.x ?? 120,
-        y: w.y ?? 120,
-        w: clamp(w.w ?? 720, 360, 4096),
-        h: clamp(w.h ?? 480, 240, 4096),
+        x: pos.x,
+        y: pos.y,
+        w: width,
+        h: height,
         z: nextZ,
         minimized: false,
         isMaximized: false,
@@ -185,9 +227,11 @@ export const useUIStore = create<UIState>((set, get) => ({
       const maxZ = state.osWindows.reduce((m, w) => Math.max(m, w.z), 0);
       return {
         osFocusedId: id,
-        osWindows: state.osWindows.map((w) =>
-          w.id === id ? { ...w, minimized: false, z: maxZ + 1 } : w
-        ),
+        osWindows: state.osWindows.map((w) => {
+          if (w.id !== id) return w;
+          const next = clampWindowPosition(w.x, w.y, w.w, w.h);
+          return { ...w, x: next.x, y: next.y, minimized: false, z: maxZ + 1 };
+        }),
       };
     }),
 
@@ -207,19 +251,50 @@ export const useUIStore = create<UIState>((set, get) => ({
   // --- Geometry ---
   commitMove: (id, x, y) =>
     set((state) => ({
-      osWindows: state.osWindows.map((w) =>
-        w.id === id ? { ...w, x, y } : w
-      ),
+      osWindows: state.osWindows.map((w) => {
+        if (w.id !== id) return w;
+        const next = clampWindowPosition(x, y, w.w, w.h);
+        return { ...w, x: next.x, y: next.y };
+      }),
     })),
 
   commitResize: (id, w, h) =>
     set((state) => ({
-      osWindows: state.osWindows.map((win) =>
-        win.id === id
-          ? { ...win, w: clamp(w, 360, 4096), h: clamp(h, 240, 4096) }
-          : win
-      ),
+      osWindows: state.osWindows.map((win) => {
+        if (win.id !== id) return win;
+        const nextW = clamp(w, 360, 4096);
+        const nextH = clamp(h, 240, 4096);
+        const next = clampWindowPosition(win.x, win.y, nextW, nextH);
+        return { ...win, x: next.x, y: next.y, w: nextW, h: nextH };
+      }),
     })),
+
+  recoverWindow: (id) =>
+    set((state) => {
+      const maxZ = state.osWindows.reduce((m, w) => Math.max(m, w.z), 0);
+      return {
+        osFocusedId: id,
+        osWindows: state.osWindows.map((win, index) => {
+          if (win.id !== id) return win;
+          const pos = cascadePosition(index);
+          return { ...win, x: pos.x, y: pos.y, minimized: false, isMaximized: false, z: maxZ + 1 };
+        }),
+      };
+    }),
+
+  recoverWindows: () =>
+    set((state) => {
+      let z = state.osWindows.reduce((m, w) => Math.max(m, w.z), 0);
+      return {
+        osWindows: state.osWindows.map((win, index) => {
+          if (win.workspace !== state.activeWorkspace) return win;
+          const pos = cascadePosition(index);
+          z += 1;
+          return { ...win, x: pos.x, y: pos.y, minimized: false, isMaximized: false, z };
+        }),
+        osFocusedId: state.osWindows.find((w) => w.workspace === state.activeWorkspace)?.id ?? state.osFocusedId,
+      };
+    }),
 
   // --- Window Controls ---
   toggleMaximize: (id) =>
@@ -256,7 +331,7 @@ export const useUIStore = create<UIState>((set, get) => ({
       if (S.activeWorkspace !== existing.workspace) {
         set({ activeWorkspace: existing.workspace });
       }
-      get().focusWindow(existing.id); // also unminimizes & bumps z
+      get().focusWindow(existing.id); // also unminimizes, recovers geometry & bumps z
       return;
     }
 
@@ -317,9 +392,3 @@ export const useUIStore = create<UIState>((set, get) => ({
   },
 
 }));
-
-// Convenience selectors (optional)
-export const selectWindowsInActiveWorkspace = (s: UIState) =>
-  s.osWindows.filter((w) => w.workspace === s.activeWorkspace);
-export const selectFocusedWindow = (s: UIState) =>
-  s.osWindows.find((w) => w.id === s.osFocusedId) || null;

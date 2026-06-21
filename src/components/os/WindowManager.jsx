@@ -20,6 +20,13 @@ export default function WindowManager() {
         return;
       }
 
+      // Emergency window recovery / arrange visible workspace
+      if (e.ctrlKey && e.altKey && !e.shiftKey && e.key.toLowerCase() === 'r') {
+        e.preventDefault();
+        S.recoverWindows();
+        return;
+      }
+
       // Alt+Tab / Shift+Alt+Tab – cycle focus
       if (e.altKey && e.key === 'Tab') {
         e.preventDefault();

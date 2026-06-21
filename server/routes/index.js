@@ -8,6 +8,8 @@ import network from './network.js';
 import ai from './ai.js';
 import reference from './reference.js';
 import capabilities from './capabilities.js';
+import aida from './aida.js';
+import telemetry from './telemetry.js';
 
 const router = Router();
 
@@ -21,5 +23,7 @@ router.use('/network', network);
 router.use('/ai', ai);
 router.use('/reference', reference);
 router.use('/capabilities', capabilities);
+router.use('/aida', aida);
+router.use('/telemetry', telemetry);
 
 export default router;

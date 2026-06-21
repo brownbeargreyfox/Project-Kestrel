@@ -15,6 +15,7 @@ export default function DesktopShell() {
   const [ctx, setCtx] = React.useState(null);
   const launchApp = useUIStore((s) => s.launchApp);
   const openLauncher = useUIStore((s) => s.openLauncher);
+  const recoverWindows = useUIStore((s) => s.recoverWindows);
 
   const onDesktopContext = (e) => {
     e.preventDefault();
@@ -22,11 +23,12 @@ export default function DesktopShell() {
       x: e.clientX,
       y: e.clientY,
       items: [
+        { label: 'Arrange Windows', action: recoverWindows },
+        { label: 'Open Launcher', action: openLauncher },
+        { separator: true },
         { label: 'Open Terminal', action: () => launchApp('kestrel-terminal') },
         { label: 'System Monitor', action: () => launchApp('system-health') },
-        { label: 'Files',         action: () => launchApp('kestrel-files') },
-        { separator: true },
-        { label: 'Settings', action: () => {} },
+        { label: 'Files', action: () => launchApp('kestrel-files') },
       ],
     });
   };
@@ -34,37 +36,17 @@ export default function DesktopShell() {
   return (
     <PluginProvider enabledByDefault={import.meta.env.VITE_PLUGINS_ENABLED === 'true'}>
       <div className="relative w-screen h-screen bg-neutral-900 text-neutral-100 overflow-hidden">
-        {/* Top bar */}
-        <header className="relative z-[1000] h-14 border-b border-neutral-800 flex items-center justify-between px-4">
-          <div className="flex items-center gap-3">
-            <div className="font-semibold tracking-wide">Kestrel</div>
-            <span className="text-xs opacity-60">Desktop</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={openLauncher}
-              className="px-3 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 border border-neutral-700"
-              title="Open launcher (Ctrl+Space)"
-            >
-              ☰
-            </button>
-          </div>
-        </header>
+        <Taskbar />
 
-        {/* Desktop / windows layer (beneath header) */}
-        {/* Desktop / windows layer (between header and taskbar) */}
- 		<div
-    	   className="absolute left-0 right-0 top-14 bottom-12 z-[200]"
-		   onContextMenu={onDesktopContext}
-		>
+        <div
+          className="absolute left-0 right-0 top-12 bottom-0 z-[200]"
+          onContextMenu={onDesktopContext}
+        >
           <WindowManager />
         </div>
 
-        {/* Overlays */}
-        <AppLauncher />  {/* z-[1100] set inside component */}
-        <Taskbar />      {/* z-[900]   set inside component */}
+        <AppLauncher />
 
-        {/* Context menu */}
         {ctx && <ContextMenu {...ctx} onClose={() => setCtx(null)} />}
       </div>
     </PluginProvider>

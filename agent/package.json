@@ -1,0 +1,16 @@
+{
+  "name": "kestrel-agent",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Kestrel infrastructure telemetry agent — reports real system metrics to the AIDA Sentinel.",
+  "main": "kestrel-agent.js",
+  "scripts": {
+    "start": "node kestrel-agent.js"
+  },
+  "dependencies": {
+    "systeminformation": "^5.23.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

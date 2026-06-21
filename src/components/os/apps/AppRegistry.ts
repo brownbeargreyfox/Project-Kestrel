@@ -1,7 +1,7 @@
 // src/components/os/apps/AppRegistry.ts
 // Unified app registry compatible with useUIStore.launchApp (component | loader | import)
 
-import { Terminal, Shield, Activity, Folder, BellRing, Globe, Bell, Plug, Bot, ShieldCheck } from 'lucide-react';
+import { Terminal, Shield, Activity, Folder, BellRing, Globe, Bell, Plug, Bot, ShieldCheck, ShieldAlert } from 'lucide-react';
 import type { AppManifest } from '../../../Types/os.types';
 import type { ComponentType } from 'react';
 
@@ -119,6 +119,25 @@ export const AppRegistry: Record<string, KestrelApp> = {
     import: () => import('./AIProvidersApp.jsx'),
     mount: () => import('./AIProvidersApp.jsx'),
     w: 980, h: 680,
+  },
+
+  'aida-sentinel': {
+    id: 'aida-sentinel',
+    title: 'AIDA Sentinel',
+    icon: ShieldAlert,
+    permissions: [
+      'ui:window',
+      'events:subscribe',
+      'events:publish',
+      'data:metrics.read',
+      'data:recommendations.read',
+      'aida:agent.access',
+      'maia:memory.read',
+      'maia:memory.write',
+    ],
+    import: () => import('../../../plugins/aida/views/AIDASentinelWorkspace.jsx'),
+    mount:  () => import('../../../plugins/aida/views/AIDASentinelWorkspace.jsx'),
+    w: 1180, h: 800,
   },
 
   'capability-center': {

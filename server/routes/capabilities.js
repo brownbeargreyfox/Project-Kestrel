@@ -156,4 +156,71 @@ router.get('/intents/recent', async (req, res) => {
   res.json({ ok: true, count: intents.length, intents });
 });
 
+// ---------------------------------------------------------------------------
+// Intent resolution — the human-in-the-loop decision point.
+// Approve or reject a pending intent. Both outcomes are fully audited.
+// The AIDA Constitution: "Humans make all final decisions."
+// ---------------------------------------------------------------------------
+
+async function readAllIntents() {
+  try {
+    const raw = await fs.readFile(INTENTS_FILE, 'utf8');
+    return raw.split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l));
+  } catch (err) {
+    if (err?.code === 'ENOENT') return [];
+    throw err;
+  }
+}
+
+async function rewriteIntents(intents) {
+  await fs.mkdir(STATE_DIR, { recursive: true });
+  await fs.writeFile(INTENTS_FILE, intents.map((i) => JSON.stringify(i)).join('\n') + '\n', 'utf8');
+}
+
+async function resolveIntent(req, res, resolution) {
+  const intentId = sanitizeText(req.params.id, 64);
+  const note = sanitizeText(req.body?.note, 500);
+
+  const all = await readAllIntents();
+  const idx = all.findIndex((i) => i.id === intentId);
+
+  if (idx === -1) {
+    return res.status(404).json({ ok: false, error: 'Intent not found.' });
+  }
+
+  const intent = all[idx];
+
+  if (intent.status !== 'pending-review') {
+    return res.status(409).json({
+      ok: false,
+      error: `Intent is already "${intent.status}" and cannot be ${resolution}d.`,
+    });
+  }
+
+  all[idx] = {
+    ...intent,
+    status: resolution === 'approve' ? 'approved' : 'rejected',
+    resolvedAt: nowIso(),
+    resolvedBy: getActor(req),
+    resolutionNote: note || null,
+  };
+
+  await rewriteIntents(all);
+
+  await writeAuditEvent(req, {
+    type: `intent.${resolution}d`,
+    capability: 'system:action.approve',
+    outcome: resolution === 'approve' ? 'approved' : 'rejected',
+    detail: `${intent.title}${note ? ` — ${note}` : ''}`,
+    intentId: intent.id,
+    origin: intent.origin || 'manual',
+    assetId: intent.assetId || null,
+  });
+
+  return res.json({ ok: true, intent: all[idx] });
+}
+
+router.post('/intents/:id/approve', (req, res) => resolveIntent(req, res, 'approve'));
+router.post('/intents/:id/reject',  (req, res) => resolveIntent(req, res, 'reject'));
+
 export default router;
