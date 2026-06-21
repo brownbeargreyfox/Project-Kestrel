@@ -5,6 +5,7 @@ import alerts from './alerts.js';
 import simulations from './simulations.js';
 import services from './services.js';
 import network from './network.js';
+import ai from './ai.js';
 
 const router = Router();
 
@@ -15,5 +16,6 @@ router.use('/alerts', alerts);
 router.use('/simulations', simulations);
 router.use('/services', services);
 router.use('/network', network);
+router.use('/ai', ai);
 
 export default router;
