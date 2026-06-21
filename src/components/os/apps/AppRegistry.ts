@@ -103,7 +103,7 @@ export const AppRegistry: Record<string, KestrelApp> = {
 
   'network-topology': {
     id: 'network-topology',
-    title: 'Home Network',
+    title: 'Network Inventory',
     icon: Globe,
     permissions: ['ui:window', 'events:subscribe', 'data:topology.read', 'data:metrics.read'],
     import: () => import('./NetworkTopologyApp.jsx'),

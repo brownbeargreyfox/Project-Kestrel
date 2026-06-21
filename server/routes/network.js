@@ -10,6 +10,9 @@ const execFileAsync = promisify(execFile);
 const router = Router();
 const STATE_DIR = path.resolve(process.cwd(), '.kestrel');
 const LABELS_FILE = path.join(STATE_DIR, 'network-device-labels.json');
+const HISTORY_FILE = path.join(STATE_DIR, 'network-device-history.json');
+const IDENTITY_CACHE_FILE = path.join(STATE_DIR, 'network-identity-cache.json');
+const ENABLE_EXTERNAL_IDENTITY_LOOKUP = process.env.KESTREL_ENABLE_EXTERNAL_IDENTITY_LOOKUP === 'true';
 const TRUST_STATES = new Set(['trusted', 'unknown', 'watch', 'blocked']);
 const DEVICE_KINDS = new Set([
   'router/gateway',
@@ -57,6 +60,11 @@ function getDeviceKey(device) {
   return `ip:${device.ip}`;
 }
 
+function getMacPrefix(mac) {
+  if (!mac) return null;
+  return mac.split(':').slice(0, 3).join(':');
+}
+
 function sanitizeText(value, maxLength) {
   if (typeof value !== 'string') return '';
   return value.trim().slice(0, maxLength);
@@ -83,9 +91,9 @@ function sanitizeLabelPatch(body) {
   };
 }
 
-async function readLabels() {
+async function readJsonFile(filePath) {
   try {
-    const raw = await fs.readFile(LABELS_FILE, 'utf8');
+    const raw = await fs.readFile(filePath, 'utf8');
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === 'object' ? parsed : {};
   } catch (error) {
@@ -94,9 +102,33 @@ async function readLabels() {
   }
 }
 
-async function writeLabels(labels) {
+async function writeJsonFile(filePath, value) {
   await fs.mkdir(STATE_DIR, { recursive: true });
-  await fs.writeFile(LABELS_FILE, `${JSON.stringify(labels, null, 2)}\n`, 'utf8');
+  await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+async function readLabels() {
+  return readJsonFile(LABELS_FILE);
+}
+
+async function writeLabels(labels) {
+  return writeJsonFile(LABELS_FILE, labels);
+}
+
+async function readHistory() {
+  return readJsonFile(HISTORY_FILE);
+}
+
+async function writeHistory(history) {
+  return writeJsonFile(HISTORY_FILE, history);
+}
+
+async function readIdentityCache() {
+  return readJsonFile(IDENTITY_CACHE_FILE);
+}
+
+async function writeIdentityCache(cache) {
+  return writeJsonFile(IDENTITY_CACHE_FILE, cache);
 }
 
 function applyLabels(devices, labels) {
@@ -107,6 +139,7 @@ function applyLabels(devices, labels) {
     return {
       ...device,
       deviceKey,
+      macPrefix: getMacPrefix(device.mac),
       label: label?.label ?? '',
       displayName: label?.label || device.hostname || device.mac || device.ip,
       trustState: label?.trustState ?? 'unknown',
@@ -116,6 +149,42 @@ function applyLabels(devices, labels) {
       kind: labelKind ?? device.kind,
     };
   });
+}
+
+function applyAndUpdateHistory(devices, history) {
+  const now = new Date().toISOString();
+  const nextHistory = { ...history };
+
+  const nextDevices = devices.map((device) => {
+    const deviceKey = device.deviceKey ?? getDeviceKey(device);
+    const existing = nextHistory[deviceKey] ?? {};
+    const firstSeen = existing.firstSeen ?? now;
+    const seenCount = Number.isFinite(existing.seenCount) ? existing.seenCount + 1 : 1;
+    const acknowledgedAt = existing.acknowledgedAt ?? null;
+
+    nextHistory[deviceKey] = {
+      firstSeen,
+      lastSeen: now,
+      seenCount,
+      acknowledgedAt,
+      lastIp: device.ip,
+      lastMac: device.mac,
+      lastHostname: device.hostname,
+      lastDisplayName: device.displayName,
+      lastKind: device.kind,
+    };
+
+    return {
+      ...device,
+      firstSeen,
+      lastSeen: now,
+      seenCount,
+      acknowledgedAt,
+      isNew: !acknowledgedAt,
+    };
+  });
+
+  return { devices: nextDevices, history: nextHistory };
 }
 
 function getLocalInterfaces() {
@@ -139,9 +208,7 @@ function getLocalInterfaces() {
 }
 
 async function runArp() {
-  const command = process.platform === 'win32' ? 'arp' : 'arp';
-  const args = ['-a'];
-  const { stdout } = await execFileAsync(command, args, { timeout: 5000, windowsHide: true });
+  const { stdout } = await execFileAsync('arp', ['-a'], { timeout: 5000, windowsHide: true });
   return stdout;
 }
 
@@ -154,7 +221,6 @@ function parseArpTable(output) {
     let mac = null;
     let type = 'arp';
 
-    // Windows: 192.168.1.1           aa-bb-cc-dd-ee-ff     dynamic
     const win = line.match(/\b(\d+\.\d+\.\d+\.\d+)\s+([0-9a-fA-F-]{17})\s+(\w+)/);
     if (win) {
       ip = win[1];
@@ -162,14 +228,12 @@ function parseArpTable(output) {
       type = win[3]?.toLowerCase() ?? 'arp';
     }
 
-    // macOS/BSD: ? (192.168.1.1) at aa:bb:cc:dd:ee:ff on en0 ifscope [ethernet]
     const bsd = line.match(/\((\d+\.\d+\.\d+\.\d+)\)\s+at\s+([0-9a-fA-F:]{17})/);
     if (!ip && bsd) {
       ip = bsd[1];
       mac = cleanMac(bsd[2]);
     }
 
-    // Linux ip neigh-ish arp output: 192.168.1.1 ether aa:bb:cc:dd:ee:ff ...
     const nix = line.match(/\b(\d+\.\d+\.\d+\.\d+)\b.*\b([0-9a-fA-F:]{17})\b/);
     if (!ip && nix) {
       ip = nix[1];
@@ -275,6 +339,263 @@ async function enrichHostnames(devices) {
   return devices;
 }
 
+function inferFamilyFromText(device, vendor) {
+  const text = [
+    device.label,
+    device.displayName,
+    device.hostname,
+    device.kind,
+    device.notes,
+    ...(Array.isArray(device.tags) ? device.tags : []),
+    vendor,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  if (/deco|router|gateway|mesh|ap\b|access point|tplink|tp-link|eero|orbi/.test(text)) return 'network infrastructure';
+  if (/camera|cam|doorbell|wyze|ring|arlo|nest/.test(text)) return 'camera / security IoT';
+  if (/tv|roku|chromecast|fire tv|shield|xbox|playstation|ps5|media/.test(text)) return 'media / entertainment';
+  if (/phone|iphone|pixel|android|galaxy/.test(text)) return 'phone / mobile';
+  if (/printer|brother|canon|epson|hp/.test(text)) return 'printer';
+  if (/laptop|desktop|pc|macbook|windows|linux/.test(text)) return 'computer';
+  if (/thermostat|sensor|bulb|plug|iot|smart/.test(text)) return 'smart home IoT';
+  return 'unclassified network device';
+}
+
+function buildResearchLinks(device, vendor) {
+  const macPrefix = device.macPrefix || getMacPrefix(device.mac) || '';
+  const queryBits = [device.label, device.hostname, vendor, device.kind, macPrefix]
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+
+  return [
+    {
+      label: 'Search identity clues',
+      url: `https://duckduckgo.com/?q=${encodeURIComponent(`${queryBits} home network device`)}`,
+    },
+    {
+      label: 'Search MAC/OUI vendor',
+      url: `https://duckduckgo.com/?q=${encodeURIComponent(`${macPrefix || device.mac || device.ip} MAC OUI vendor`)}`,
+    },
+    {
+      label: 'IEEE registry',
+      url: 'https://regauth.standards.ieee.org/standards-ra-web/pub/view.html#registries',
+    },
+    {
+      label: 'Wireshark OUI lookup',
+      url: 'https://www.wireshark.org/tools/oui-lookup.html',
+    },
+  ];
+}
+
+async function lookupExternalVendor(device, cache) {
+  const mac = cleanMac(device.mac);
+  const macPrefix = getMacPrefix(mac);
+  if (!ENABLE_EXTERNAL_IDENTITY_LOOKUP || !mac || !macPrefix) return null;
+
+  const cached = cache[macPrefix];
+  if (cached?.vendor) return { ...cached, source: 'identity-cache' };
+
+  if (typeof fetch !== 'function') return null;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 1500);
+
+  try {
+    const response = await fetch(`https://api.macvendors.com/${encodeURIComponent(mac)}`, {
+      signal: controller.signal,
+      headers: { Accept: 'text/plain' },
+    });
+    if (!response.ok) return null;
+    const vendor = sanitizeText(await response.text(), 96);
+    if (!vendor) return null;
+
+    const record = {
+      vendor,
+      source: 'macvendors',
+      macPrefix,
+      cachedAt: new Date().toISOString(),
+    };
+    cache[macPrefix] = record;
+    await writeIdentityCache(cache);
+    return record;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function resolveDeviceIdentity(device) {
+  const cache = await readIdentityCache();
+  const normalized = {
+    ...device,
+    mac: cleanMac(device.mac),
+    ip: sanitizeText(device.ip, 32),
+    hostname: sanitizeText(device.hostname, 128),
+    label: sanitizeText(device.label, 64),
+    kind: DEVICE_KINDS.has(device.kind) ? device.kind : 'network-device',
+    notes: sanitizeText(device.notes, 500),
+    tags: sanitizeTags(device.tags),
+  };
+  normalized.macPrefix = getMacPrefix(normalized.mac);
+  normalized.deviceKey = normalized.deviceKey || getDeviceKey(normalized);
+
+  const sources = [];
+  const reasons = [];
+  let vendor = null;
+  let confidence = 0.25;
+
+  if (normalized.label) {
+    sources.push('label');
+    reasons.push(`You labeled this device as “${normalized.label}”.`);
+    confidence += 0.25;
+  }
+
+  if (normalized.hostname) {
+    sources.push('hostname');
+    reasons.push(`Hostname resolved as “${normalized.hostname}”.`);
+    confidence += 0.15;
+  }
+
+  if (normalized.kind && normalized.kind !== 'network-device' && normalized.kind !== 'unknown') {
+    sources.push('kind');
+    reasons.push(`Current kind is “${normalized.kind}”.`);
+    confidence += 0.1;
+  }
+
+  if (normalized.macPrefix && cache[normalized.macPrefix]?.vendor) {
+    vendor = cache[normalized.macPrefix].vendor;
+    sources.push('identity-cache');
+    reasons.push(`Cached MAC prefix ${normalized.macPrefix} maps to “${vendor}”.`);
+    confidence += 0.2;
+  }
+
+  const external = await lookupExternalVendor(normalized, cache);
+  if (external?.vendor) {
+    vendor = external.vendor;
+    if (!sources.includes(external.source)) sources.push(external.source);
+    reasons.push(`MAC vendor lookup returned “${vendor}”.`);
+    confidence += 0.25;
+  }
+
+  if (normalized.macPrefix && !vendor) {
+    sources.push('mac-prefix');
+    reasons.push(`MAC prefix ${normalized.macPrefix} is available for vendor lookup.`);
+  }
+
+  if (normalized.tags.length > 0) {
+    sources.push('tags');
+    reasons.push(`Tags: ${normalized.tags.join(', ')}.`);
+    confidence += 0.05;
+  }
+
+  const family = inferFamilyFromText(normalized, vendor);
+  if (family !== 'unclassified network device') confidence += 0.1;
+
+  confidence = Math.max(0.05, Math.min(0.95, confidence));
+
+  return {
+    ok: true,
+    resolvedAt: new Date().toISOString(),
+    externalLookupEnabled: ENABLE_EXTERNAL_IDENTITY_LOOKUP,
+    identity: {
+      deviceKey: normalized.deviceKey,
+      displayName: normalized.label || normalized.hostname || normalized.mac || normalized.ip,
+      likelyVendor: vendor,
+      likelyFamily: family,
+      confidence,
+      confidenceLabel: confidence >= 0.75 ? 'high' : confidence >= 0.45 ? 'medium' : 'low',
+      sources: [...new Set(sources)],
+      reasons,
+      researchLinks: buildResearchLinks(normalized, vendor),
+    },
+  };
+}
+
+function riskLevel(score) {
+  if (score >= 75) return 'critical';
+  if (score >= 55) return 'high';
+  if (score >= 30) return 'medium';
+  if (score >= 10) return 'low';
+  return 'clear';
+}
+
+function addSignal(signals, score, severity, title, detail) {
+  signals.push({ score, severity, title, detail });
+}
+
+function assessDeviceRisk(device, identity, allDevices) {
+  const signals = [];
+  const trustState = device.trustState || 'unknown';
+  const kind = device.kind || 'network-device';
+  const family = identity?.likelyFamily || 'unclassified network device';
+  const confidence = identity?.confidence ?? 0;
+
+  if (device.isNew) {
+    addSignal(signals, 25, 'medium', 'New device', 'This device has not been acknowledged yet.');
+  }
+
+  if (trustState === 'watch') {
+    addSignal(signals, 30, 'high', 'Watch-listed', 'You marked this device for watch status.');
+  }
+
+  if (trustState === 'blocked') {
+    addSignal(signals, 45, 'critical', 'Blocked label', 'You marked this device as blocked in local inventory.');
+  }
+
+  if (trustState === 'unknown') {
+    addSignal(signals, 10, 'low', 'Unknown trust', 'This device has not been classified as trusted.');
+  }
+
+  if (!device.label) {
+    addSignal(signals, 8, 'low', 'Unlabeled device', 'No friendly name has been assigned yet.');
+  }
+
+  if (!device.hostname) {
+    addSignal(signals, 8, 'low', 'No hostname', 'Reverse DNS did not return a hostname.');
+  }
+
+  if (!device.mac) {
+    addSignal(signals, 12, 'medium', 'No MAC visible', 'The device is visible by IP but not by MAC in local inventory.');
+  }
+
+  if (kind === 'network-device' || kind === 'unknown') {
+    addSignal(signals, 10, 'low', 'Generic device type', 'The device kind is still generic.');
+  }
+
+  if (confidence < 0.45) {
+    addSignal(signals, 10, 'low', 'Low identity confidence', 'Identity resolver does not have enough clues yet.');
+  }
+
+  if ((kind === 'router/gateway' || family === 'network infrastructure') && trustState !== 'trusted') {
+    addSignal(signals, 18, 'medium', 'Infrastructure not trusted', 'A router/gateway-like device should be labeled and trusted intentionally.');
+  }
+
+  if (/iot|camera|smart home/i.test(family) && trustState !== 'trusted') {
+    addSignal(signals, 15, 'medium', 'IoT device not trusted', 'IoT-like devices should be labeled and classified.');
+  }
+
+  const gatewayLike = allDevices.filter((item) => item.kind === 'router/gateway');
+  if (device.kind === 'router/gateway' && gatewayLike.length > 1) {
+    addSignal(signals, 10, 'low', 'Multiple gateway-like devices', 'More than one gateway-like device is visible. This may be normal with mesh networks.');
+  }
+
+  const score = Math.min(100, signals.reduce((sum, signal) => sum + signal.score, 0));
+  return {
+    score,
+    level: riskLevel(score),
+    signals: signals.sort((a, b) => b.score - a.score),
+  };
+}
+
+function summarizeRisks(devices) {
+  const summary = { critical: 0, high: 0, medium: 0, low: 0, clear: 0 };
+  for (const device of devices) {
+    summary[device.risk?.level || 'clear'] += 1;
+  }
+  return summary;
+}
+
 router.get('/labels', async (req, res) => {
   try {
     res.json({ ok: true, labels: await readLabels() });
@@ -303,6 +624,46 @@ router.post('/labels', async (req, res) => {
     return res.json({ ok: true, key, label: labels[key] ?? null, labels });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message ?? 'Failed to save label' });
+  }
+});
+
+router.post('/identity/resolve', async (req, res) => {
+  try {
+    const device = req.body?.device;
+    if (!device || typeof device !== 'object') {
+      return res.status(400).json({ ok: false, error: 'Missing device payload' });
+    }
+    return res.json(await resolveDeviceIdentity(device));
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message ?? 'Failed to resolve identity' });
+  }
+});
+
+router.post('/devices/acknowledge', async (req, res) => {
+  try {
+    const keys = Array.isArray(req.body?.keys)
+      ? req.body.keys.map((key) => sanitizeText(key, 96)).filter(Boolean)
+      : [sanitizeText(req.body?.key, 96)].filter(Boolean);
+
+    if (keys.length === 0) {
+      return res.status(400).json({ ok: false, error: 'No device keys provided' });
+    }
+
+    const history = await readHistory();
+    const acknowledgedAt = new Date().toISOString();
+
+    for (const key of keys) {
+      if (!/^(mac:([0-9a-f]{2}:){5}[0-9a-f]{2}|ip:\d+\.\d+\.\d+\.\d+)$/.test(key)) continue;
+      history[key] = {
+        ...(history[key] ?? { firstSeen: acknowledgedAt, seenCount: 0 }),
+        acknowledgedAt,
+      };
+    }
+
+    await writeHistory(history);
+    return res.json({ ok: true, acknowledgedAt, keys, history });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message ?? 'Failed to acknowledge devices' });
   }
 });
 
@@ -338,8 +699,21 @@ router.get('/devices', async (req, res) => {
 
     await enrichHostnames(devices);
     devices = applyLabels(devices, await readLabels());
+    const historyResult = applyAndUpdateHistory(devices, await readHistory());
+    devices = historyResult.devices;
+    await writeHistory(historyResult.history);
 
-    devices.sort((a, b) => ipToNumber(a.ip) - ipToNumber(b.ip));
+    devices = await runPool(devices, 8, async (device) => {
+      const identity = (await resolveDeviceIdentity(device)).identity;
+      const risk = assessDeviceRisk(device, identity, devices);
+      return { ...device, identity, risk };
+    });
+
+    devices.sort((a, b) => {
+      const riskDelta = (b.risk?.score ?? 0) - (a.risk?.score ?? 0);
+      if (riskDelta !== 0) return riskDelta;
+      return ipToNumber(a.ip) - ipToNumber(b.ip);
+    });
 
     res.json({
       ok: true,
@@ -348,6 +722,9 @@ router.get('/devices', async (req, res) => {
       elapsedMs: Date.now() - startedAt,
       interfaces,
       count: devices.length,
+      newCount: devices.filter((device) => device.isNew).length,
+      riskSummary: summarizeRisks(devices),
+      externalIdentityLookupEnabled: ENABLE_EXTERNAL_IDENTITY_LOOKUP,
       devices,
       safety: {
         mode: scanMode === 'ping' ? 'bounded-icmp-ping-sweep' : 'passive-arp-cache',
