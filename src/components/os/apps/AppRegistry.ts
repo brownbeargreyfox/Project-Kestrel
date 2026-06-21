@@ -135,8 +135,8 @@ export const AppRegistry: Record<string, KestrelApp> = {
       'maia:memory.read',
       'maia:memory.write',
     ],
-    import: () => import('../../../plugins/aida/views/AIDACommandCenter'),
-    mount:  () => import('../../../plugins/aida/views/AIDACommandCenter'),
+    import: () => import('../../../plugins/aida/views/AIDASentinelWorkspace.jsx'),
+    mount:  () => import('../../../plugins/aida/views/AIDASentinelWorkspace.jsx'),
     w: 1180, h: 800,
   },
 

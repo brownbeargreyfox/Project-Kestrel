@@ -1,4 +1,4 @@
-// src/components/os/apps/AidaSentinelApp.jsx
+// src/plugins/aida/views/AIDASentinelWorkspace.jsx
 //
 // AIDA Sentinel — operator cockpit for the sentinel-class advisory system.
 // Five pillars: Observe / Recommend / Memory / Simulate / Reflect
@@ -146,7 +146,7 @@ function NarrativeButton({ recId }) {
   );
 }
 
-export default function AidaSentinelApp() {
+export default function AIDASentinelWorkspace() {
   const [pillar, setPillar] = React.useState('observe');
   const [observation, setObservation] = React.useState(null);
   const [recs, setRecs] = React.useState([]);
