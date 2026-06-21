@@ -6,6 +6,7 @@ import simulations from './simulations.js';
 import services from './services.js';
 import network from './network.js';
 import ai from './ai.js';
+import reference from './reference.js';
 
 const router = Router();
 
@@ -17,5 +18,6 @@ router.use('/simulations', simulations);
 router.use('/services', services);
 router.use('/network', network);
 router.use('/ai', ai);
+router.use('/reference', reference);
 
 export default router;
