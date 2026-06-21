@@ -21,6 +21,7 @@ import crypto from 'node:crypto';
 
 import { getInfraState } from '../lib/infraState.js';
 import { buildObservation, buildRecommendations, ENGINE_VERSION } from '../lib/aidaEngine.js';
+import { broadcast } from '../lib/eventBus.js';
 
 const router = Router();
 
@@ -213,6 +214,12 @@ router.post('/recommendations/:id/accept', async (req, res) => {
   };
 
   await appendJsonLine(INTENTS_FILE, intent);
+  broadcast('intent.created', {
+    intentId: intent.id,
+    title:    intent.title,
+    severity: intent.severity,
+    origin:   'aida',
+  });
   await writeAudit(req, {
     type: 'aida.recommendation.accepted',
     capability: rec.suggestedCapability,
