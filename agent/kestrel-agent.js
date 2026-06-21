@@ -48,6 +48,7 @@ function loadConfig() {
     criticality: Number(process.env.KESTREL_CRITICALITY ?? file.criticality ?? 0.5),
     intervalMs:  Number(process.env.KESTREL_INTERVAL_MS ?? file.intervalMs ?? 30_000),
     pingHost:    process.env.KESTREL_PING_HOST    || file.pingHost    || '1.1.1.1',
+    agentToken:  process.env.KESTREL_AGENT_TOKEN  || file.agentToken  || null,
   };
 }
 
@@ -172,9 +173,12 @@ async function report(config, agentId, osInfo) {
   };
 
   try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (config.agentToken) headers['Authorization'] = `Bearer ${config.agentToken}`;
+
     const res = await fetch(`${config.serverUrl}/api/telemetry/ingest`, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body:    JSON.stringify(payload),
       signal:  AbortSignal.timeout(10_000),
     });
@@ -216,6 +220,7 @@ async function main() {
   console.log(`  Datacenter : ${config.datacenter} / ${config.tier}`);
   console.log(`  Type       : ${config.type}  criticality: ${config.criticality}`);
   console.log(`  Interval   : ${config.intervalMs / 1000}s`);
+  console.log(`  Auth token : ${config.agentToken ? 'configured' : 'none (open)'}`);
   console.log(`  OS         : ${osInfo.distro} ${osInfo.release} (${osInfo.arch})`);
 
   // First report immediately

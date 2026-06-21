@@ -6,7 +6,12 @@
 // Data flow:
 //   /api/aida/observe         → assets
 //   /api/aida/recommendations → risks (engine recs translated to Risk type)
-//   /api/events (SSE)         → telemetry.update triggers a refresh
+//   /api/telemetry/mode       → authoritative LIVE/MOCK flag
+//   /api/events (SSE)         → telemetry.update triggers a debounced refresh
+//
+// Concurrency guards:
+//   - refreshInFlight: drops duplicate calls while one is already in-flight
+//   - debounceTimer:   coalesces rapid SSE bursts into a single refresh (800ms)
 //
 // Governance: reads only. Never posts on behalf of the operator.
 
@@ -108,6 +113,8 @@ function serverAssetToStore(a: ServerAsset): AIDAAsset {
 export function useAIDABridge(): void {
   useEffect(() => {
     let alive = true;
+    let refreshInFlight = false;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
     const {
       setConnectionState, setLastError, setServerTime, setDataMode,
@@ -117,10 +124,13 @@ export function useAIDABridge(): void {
     setConnectionState('connecting');
 
     async function refresh(): Promise<void> {
+      if (refreshInFlight || !alive) return;
+      refreshInFlight = true;
       try {
-        const [obsRes, recRes] = await Promise.all([
+        const [obsRes, recRes, modeRes] = await Promise.all([
           fetch('/api/aida/observe'),
           fetch('/api/aida/recommendations'),
+          fetch('/api/telemetry/mode'),
         ]);
 
         if (!alive) return;
@@ -131,10 +141,9 @@ export function useAIDABridge(): void {
           return;
         }
 
-        const obsJson = (await obsRes.json()) as {
-          observation: { assets: ServerAsset[]; assetCount: number };
-        };
-        const recJson = (await recRes.json()) as { recommendations: ServerRec[] };
+        const obsJson  = (await obsRes.json())  as { observation: { assets: ServerAsset[] } };
+        const recJson  = (await recRes.json())  as { recommendations: ServerRec[] };
+        const modeJson = (await modeRes.json().catch(() => null)) as { mode?: string } | null;
 
         if (!alive) return;
 
@@ -142,14 +151,16 @@ export function useAIDABridge(): void {
         const assets = obsJson.observation.assets ?? [];
         setAssets(assets.map(serverAssetToStore));
 
-        // Data mode
-        setDataMode(obsJson.observation.assetCount > 0 ? 'live' : 'mock');
+        // Data mode — authoritative source is /api/telemetry/mode (hasRealData())
+        if (modeJson?.mode === 'live' || modeJson?.mode === 'mock') {
+          setDataMode(modeJson.mode);
+        }
 
         // Risks
-        const recs = recJson.recommendations ?? [];
+        const recs  = recJson.recommendations ?? [];
         const risks = recs.map(recToRisk);
 
-        // Detect new risk IDs before upserting
+        // Detect new risk IDs before upserting (for toast notifications)
         const { seenRiskIds } = useAIDAStore.getState();
         const newRisks = risks.filter((r) => !(r.id in seenRiskIds));
 
@@ -167,7 +178,18 @@ export function useAIDABridge(): void {
         if (!alive) return;
         setConnectionState('error');
         setLastError(err instanceof Error ? err.message : 'Bridge fetch failed');
+      } finally {
+        refreshInFlight = false;
       }
+    }
+
+    // Debounced trigger — coalesces rapid SSE bursts into one refresh
+    function scheduleRefresh(): void {
+      if (debounceTimer !== null) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        void refresh();
+      }, 800);
     }
 
     const sse = new EventSource('/api/events');
@@ -186,7 +208,7 @@ export function useAIDABridge(): void {
         payload: {},
       };
       ingestEvent(ev);
-      void refresh();
+      scheduleRefresh();
     });
 
     sse.onerror = () => {
@@ -201,6 +223,7 @@ export function useAIDABridge(): void {
 
     return () => {
       alive = false;
+      if (debounceTimer !== null) clearTimeout(debounceTimer);
       sse.close();
     };
   }, []);

@@ -1,7 +1,7 @@
 // src/plugins/aida/views/AIDACommandCenter.tsx
 //
 // AIDA command center — three-card overview for assets, events, and simulation.
-// Connects to the AIDA WS stream and reads state from useAIDAStore.
+// Connects to live data via REST+SSE bridge (useAIDABridge) and reads state from useAIDAStore.
 // Governance: AIDA is advisory only. No autonomous action taken here.
 
 import React from 'react';

@@ -17,8 +17,21 @@ import { broadcast } from '../lib/eventBus.js';
 const router = Router();
 
 const REQUIRED_FIELDS = ['agentId', 'hostname', 'metrics'];
-const VALID_TIERS = ['dmz', 'web-tier', 'app-tier', 'data-tier', 'management', 'cloud-hybrid'];
-const VALID_STATUSES = ['server', 'workstation', 'vm', 'nas', 'network', 'database', 'cache', 'hypervisor', 'container'];
+const VALID_TIERS  = ['dmz', 'web-tier', 'app-tier', 'data-tier', 'management', 'cloud-hybrid'];
+const VALID_TYPES  = ['server', 'workstation', 'vm', 'nas', 'network', 'database', 'cache', 'hypervisor', 'container'];
+
+// Optional bearer-token auth — set KESTREL_AGENT_TOKEN on the server to require it.
+// Agents must include: Authorization: Bearer <token>
+const AGENT_TOKEN = process.env.KESTREL_AGENT_TOKEN || null;
+
+function requireAgentToken(req, res, next) {
+  if (!AGENT_TOKEN) return next(); // no token configured — open ingestion
+  const auth = (req.headers['authorization'] ?? '').trim();
+  if (auth !== `Bearer ${AGENT_TOKEN}`) {
+    return res.status(401).json({ ok: false, error: 'Invalid or missing agent token.' });
+  }
+  return next();
+}
 
 function sanitize(v, max = 128) {
   if (typeof v !== 'string') return '';
@@ -39,7 +52,7 @@ function validateHeartbeat(body) {
 }
 
 // ── POST /ingest ──────────────────────────────────────────────────────────────
-router.post('/ingest', (req, res) => {
+router.post('/ingest', requireAgentToken, (req, res) => {
   const err = validateHeartbeat(req.body);
   if (err) return res.status(400).json({ ok: false, error: err });
 
@@ -101,7 +114,12 @@ router.put('/agents/:id', (req, res) => {
     }
     patch.tier = req.body.tier;
   }
-  if (req.body.type != null) patch.type = sanitize(req.body.type, 32);
+  if (req.body.type != null) {
+    if (!VALID_TYPES.includes(req.body.type)) {
+      return res.status(400).json({ ok: false, error: `Invalid type. Valid: ${VALID_TYPES.join(', ')}` });
+    }
+    patch.type = sanitize(req.body.type, 32);
+  }
   if (req.body.criticality != null) {
     const c = Number(req.body.criticality);
     if (isNaN(c) || c < 0 || c > 1) return res.status(400).json({ ok: false, error: 'criticality must be 0–1' });

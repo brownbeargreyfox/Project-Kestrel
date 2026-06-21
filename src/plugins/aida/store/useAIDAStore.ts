@@ -146,13 +146,11 @@ export const useAIDAStore = create<AIDAStore>()((set, get) => ({
     })),
 
   upsertRisks: (risks) =>
-    set((s) => ({
-      risks: risks.reduce<Record<string, Risk>>(
-        (acc, r) => ({ ...acc, [r.id]: r }),
-        { ...s.risks },
-      ),
-      lastRiskUpdateTs: Date.now(),
-    })),
+    set((s) => {
+      const next: Record<string, Risk> = { ...s.risks };
+      for (const r of risks) next[r.id] = r;
+      return { risks: next, lastRiskUpdateTs: Date.now() };
+    }),
 
   removeRisk: (riskId) =>
     set((s) => {
