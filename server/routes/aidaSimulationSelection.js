@@ -16,7 +16,10 @@ const STATUS_RANK = {
 
 function scoreFallbackAsset(asset) {
   let score = STATUS_RANK[asset?.status] ?? 0;
-  if (asset?.currentIncident) score += 3;
+  // Active incidents should win over generic warning pressure when recovering
+  // a stale simulation target. That keeps the fallback aligned with AIDA's
+  // at-risk ordering and the existing stale-id test fixture.
+  if (asset?.currentIncident) score += 5;
   const metrics = asset?.metrics || {};
   score += Math.min(2, Number(metrics.memoryUsage || 0) / 50);
   score += Math.min(2, Number(metrics.cpuUsage || 0) / 50);
