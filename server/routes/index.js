@@ -10,6 +10,7 @@ import ai from './ai.js';
 import reference, { enrichNetworkInventoryPayload } from './reference.js';
 import capabilities from './capabilities.js';
 import aida from './aida.js';
+import maia from './maia.js';
 import telemetry from './telemetry.js';
 import modelCatalog from './modelCatalog.js';
 
@@ -51,6 +52,7 @@ router.use('/ai', ai);
 router.use('/reference', reference);
 router.use('/capabilities', capabilities);
 router.use('/aida', aida);
+router.use('/maia', maia);
 router.use('/telemetry', telemetry);
 router.use('/model-catalog', modelCatalog);
 
