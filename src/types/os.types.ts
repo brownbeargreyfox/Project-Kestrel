@@ -1,4 +1,4 @@
-// src/Types/os.types.ts
+// src/types/os.types.ts
 // Shared OS shell app/manifest types used by the launcher and registry.
 
 import type { ComponentType, FC } from 'react';

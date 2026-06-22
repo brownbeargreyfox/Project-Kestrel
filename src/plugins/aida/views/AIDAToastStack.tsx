@@ -6,7 +6,7 @@
 
 import React, { useEffect } from 'react';
 import { useAIDAStore } from '../store/useAIDAStore';
-import type { AIDAToast } from '../../../Types/aida';
+import type { AIDAToast } from '../../../types/aida';
 
 const SEV_STYLE: Record<AIDAToast['severity'], { bg: string; border: string; dot: string }> = {
   high:   { bg: '#1c0a0a', border: '#7f1d1d', dot: '#ef4444' },

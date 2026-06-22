@@ -6,7 +6,7 @@
 // the plugin system's tab/widget slots as a secondary surface.
 
 import * as React from 'react';
-import type { HostContext } from '../../Types/plugin';
+import type { HostContext } from '../../types/plugin';
 import mockServerData from '../../data/mockserverdata';
 import { createDynamicEnterpriseSystem } from '../../data/dynamicServerEvolution';
 

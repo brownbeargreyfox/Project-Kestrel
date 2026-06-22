@@ -5,7 +5,7 @@ import InfrastructureTab from './InfrastructureTab';
 import { InfraDataProvider } from './data/context';
 import { MockInfraSource } from './data/mockSource';
 import { LiveInfraSource } from './data/liveSource';
-import type { PluginManifest } from '../../Types/plugin';
+import type { PluginManifest } from '../../types/plugin';
 
 const useMock = import.meta.env.VITE_USE_MOCK_INFRA === 'true';
 const source = useMock ? new MockInfraSource() : new LiveInfraSource();

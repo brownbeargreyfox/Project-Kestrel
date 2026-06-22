@@ -33,7 +33,7 @@
       "@core/*": ["src/core/*"],
       "@components/*": ["src/components/*"],
       "@plugins/*": ["src/plugins/*"],
-      "@types/*": ["src/Types/*"],
+      "@types/*": ["src/types/*"],
       "@store/*": ["src/store/*"],
       "@utils/*": ["src/utils/*"]
     },

@@ -5,7 +5,7 @@
 import Ajv from 'ajv';
 import type { ValidateFunction } from 'ajv';
 import addFormats from 'ajv-formats';
-import type { EventPayload, EventSchema } from '../Types/plugin';
+import type { EventPayload, EventSchema } from '../types/plugin';
 
 export class EventBusImpl {
   private listeners = new Map<string, Set<(payload: EventPayload) => void>>();

@@ -1,6 +1,6 @@
 // src/core/PermissionManager.ts
-import type { PermissionChecker } from '../Types/plugin';
-import { PermissionError } from '../Types/plugin';
+import type { PermissionChecker } from '../types/plugin';
+import { PermissionError } from '../types/plugin';
 
 export class PermissionManager {
   private pluginPermissions = new Map<string, Set<string>>();

@@ -1,7 +1,7 @@
 // src/plugins/dummy/DummyPlugin.tsx
 import React from 'react';
-import type { PluginManifest, TabDef, WidgetDef, HostContext } from '../../Types/plugin';
-import { PERMISSION_SCOPES } from '../../Types/plugin';
+import type { PluginManifest, TabDef, WidgetDef, HostContext } from '../../types/plugin';
+import { PERMISSION_SCOPES } from '../../types/plugin';
 import { Activity, Cpu, Database, TrendingUp } from 'lucide-react';
 
 // Dummy Tab Component

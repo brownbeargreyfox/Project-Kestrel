@@ -1,4 +1,4 @@
-import type { PluginManifest } from "../../Types/plugin";
+import type { PluginManifest } from "../../types/plugin";
 
 export const manifest: PluginManifest = {
   id: "maia",
