@@ -1,7 +1,8 @@
 // src/components/os/apps/CapabilityCenterApp.jsx
 
 import React from 'react';
-import { CheckCircle2, KeyRound, ListChecks, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
+import { CheckCircle2, GitBranch, KeyRound, ListChecks, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
+import IntentMemoryContext from './IntentMemoryContext';
 
 const RISK_CLASSES = {
   low:      'border-emerald-800 bg-emerald-950/70 text-emerald-200',
@@ -200,6 +201,17 @@ export default function CapabilityCenterApp() {
   const intents      = intentPayload?.intents ?? [];
   const pending      = intents.filter((i) => i.status === 'pending-review');
 
+  // Group capabilities by category for a clearer control-plane overview.
+  const capabilityGroups = React.useMemo(() => {
+    const groups = new Map();
+    for (const capability of capabilities) {
+      const key = capability.category || 'Other';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(capability);
+    }
+    return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [capabilities]);
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-neutral-950 text-neutral-100" data-testid="capability-center-app">
       {pendingReject && (
@@ -265,22 +277,34 @@ export default function CapabilityCenterApp() {
             </span>
           </div>
 
-          <div className="space-y-2">
-            {capabilities.map((capability) => (
-              <div key={capability.id} className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div>
-                    <div className="font-mono text-sm text-neutral-100">{capability.id}</div>
-                    <div className="mt-1 text-sm text-neutral-400">{capability.title}</div>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <span className={`rounded-full border px-2 py-1 text-xs ${RISK_CLASSES[capability.risk] || RISK_CLASSES.low}`}>
-                      {capability.risk}
-                    </span>
-                    <span className="rounded-full border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-300">
-                      {capability.mode}
-                    </span>
-                  </div>
+          <div className="space-y-4">
+            {capabilityGroups.map(([category, items]) => (
+              <div key={category}>
+                <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                  {category}
+                  <span className="rounded-full border border-neutral-800 px-1.5 py-0.5 text-[10px] font-normal text-neutral-500">
+                    {items.length}
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {items.map((capability) => (
+                    <div key={capability.id} className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <div className="font-mono text-sm text-neutral-100">{capability.id}</div>
+                          <div className="mt-1 text-sm text-neutral-400">{capability.title}</div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <span className={`rounded-full border px-2 py-1 text-xs ${RISK_CLASSES[capability.risk] || RISK_CLASSES.low}`}>
+                            {capability.risk}
+                          </span>
+                          <span className="rounded-full border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-300">
+                            {capability.mode}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             ))}
@@ -331,8 +355,26 @@ export default function CapabilityCenterApp() {
                       <span>{intent.actor} · {formatDate(intent.ts)}</span>
                     </div>
 
+                    {/* Lineage — where this intent came from and how it resolved */}
+                    {(intent.recommendationId || intent.assetId || intent.resolvedBy) && (
+                      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-neutral-800/70 bg-neutral-900/40 px-2 py-1 text-[11px] text-neutral-500">
+                        <span className="inline-flex items-center gap-1 text-neutral-400"><GitBranch size={11} /> Lineage</span>
+                        {intent.origin && <span>origin: {intent.origin}</span>}
+                        {intent.recommendationId && <span className="font-mono">rec {String(intent.recommendationId).slice(0, 8)}</span>}
+                        {intent.assetId && <span className="font-mono">asset {String(intent.assetId).slice(0, 8)}</span>}
+                        {intent.resolvedBy && (
+                          <span className="text-neutral-400">→ {intent.status} by {intent.resolvedBy} · {formatDate(intent.resolvedAt)}</span>
+                        )}
+                      </div>
+                    )}
+
                     {intent.resolutionNote && (
                       <div className="mt-1 text-xs text-neutral-500">Note: {intent.resolutionNote}</div>
+                    )}
+
+                    {/* Read-only MAIA memory for this asset (interpretation, not automation) */}
+                    {intent.assetId && (
+                      <IntentMemoryContext assetId={intent.assetId} assetName={intent.assetName} />
                     )}
 
                     {isPending && (
