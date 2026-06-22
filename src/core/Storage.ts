@@ -1,5 +1,5 @@
 // src/core/Storage.ts - Missing StorageImpl module
-import type { StorageAPI } from '../Types/plugin';
+import type { StorageAPI } from '../types/plugin';
 
 export class StorageImpl implements StorageAPI {
   private prefix: string;

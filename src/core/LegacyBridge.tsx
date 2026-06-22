@@ -7,7 +7,7 @@
 
 import React from "react";
 import { PluginManager } from "./PluginManager";
-import type { TabDef, WidgetDef } from "../Types/plugin";
+import type { TabDef, WidgetDef } from "../types/plugin";
 
 /** Lazy loader with runtime guard (does not fix missing files at build time). */
 function safeLazy<T extends React.ComponentType<any>>(

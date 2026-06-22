@@ -13,7 +13,7 @@ import type {
   AIDAAsset,
   AIDAEvent,
   SimulationResult,
-} from '../../../Types/aida';
+} from '../../../types/aida';
 
 // ── connection badge ──────────────────────────────────────────────────────────
 

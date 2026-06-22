@@ -23,7 +23,7 @@
 
 import assert from 'node:assert/strict';
 import { useAIDAStore } from './useAIDAStore';
-import type { Risk, AIDAEvent } from '../../../Types/aida';
+import type { Risk, AIDAEvent } from '../../../types/aida';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 

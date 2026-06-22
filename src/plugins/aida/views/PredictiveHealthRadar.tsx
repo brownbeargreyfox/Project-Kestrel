@@ -13,7 +13,7 @@ import React, { useCallback, useMemo, useRef } from 'react';
 import { useAIDAStore } from '../store/useAIDAStore';
 import { CanvasPointLayer } from './CanvasPointLayer';
 import type { CanvasPoint } from './CanvasPointLayer';
-import type { Risk, RiskType, RiskAction } from '../../../Types/aida';
+import type { Risk, RiskType, RiskAction } from '../../../types/aida';
 
 // ── feature flags ─────────────────────────────────────────────────────────────
 

@@ -17,7 +17,7 @@
 
 import { useEffect } from 'react';
 import { useAIDAStore } from '../store/useAIDAStore';
-import type { Risk, AIDAAsset, AIDAEvent } from '../../../Types/aida';
+import type { Risk, AIDAAsset, AIDAEvent } from '../../../types/aida';
 
 // ── server-shape types (internal to this module) ──────────────────────────────
 

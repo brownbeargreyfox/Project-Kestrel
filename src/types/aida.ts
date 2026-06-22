@@ -1,4 +1,4 @@
-// src/Types/aida.ts
+// src/types/aida.ts
 // Canonical AIDA contracts — shared across store, stream hook, and all AIDA views.
 // Import with relative paths only (no @/... aliases).
 

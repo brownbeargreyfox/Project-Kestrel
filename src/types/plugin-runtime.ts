@@ -1,4 +1,4 @@
-// src/Types/plugin-runtime.ts
+// src/types/plugin-runtime.ts
 import type React from 'react';
 
 /** Common props you pass into all plugin widgets (adjust as needed) */

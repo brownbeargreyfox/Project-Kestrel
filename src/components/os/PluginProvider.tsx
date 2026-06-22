@@ -5,7 +5,7 @@ import * as GatewayLib from '../../lib/gateway';
 import { PermissionManager } from '../../core/PermissionManager';
 import { StorageImpl } from '../../core/Storage';
 import { ThemeManager } from '../../core/ThemeManager';
-import type { HostContext } from '../../Types/plugin';
+import type { HostContext } from '../../types/plugin';
 import { usePluginStore } from '../../store/usePluginStore';
 import { AppErrorBoundary } from './AppErrorBoundary';
 import { sanitizeTabs, sanitizeWidgets, deepStripComponents } from '../../store/pluginSanitizers';

@@ -13,7 +13,7 @@
 //     (i.e., when the effect re-runs). Simple and safe.
 
 import { useEffect } from 'react';
-import type { Risk, AIDAAsset, AIDAEvent, SimulationResult } from '../../../Types/aida';
+import type { Risk, AIDAAsset, AIDAEvent, SimulationResult } from '../../../types/aida';
 import { useAIDAStore } from '../store/useAIDAStore';
 
 export interface UseAIDAStreamOptions {

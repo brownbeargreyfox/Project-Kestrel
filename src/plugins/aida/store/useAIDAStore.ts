@@ -12,7 +12,7 @@ import type {
   AIDAFilterState,
   AIDALayoutState,
   AIDAToast,
-} from '../../../Types/aida';
+} from '../../../types/aida';
 
 // ── state shape ───────────────────────────────────────────────────────────────
 

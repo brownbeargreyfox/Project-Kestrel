@@ -1,5 +1,5 @@
 import { Terminal, Shield, Activity, Folder } from 'lucide-react';
-import type { AppManifest } from '../../../Types/os.types';
+import type { AppManifest } from '../../../types/os.types';
 
 export const AppRegistry: Record<string, AppManifest> = {
   'kestrel-terminal': {

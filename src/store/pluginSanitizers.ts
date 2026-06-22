@@ -4,7 +4,7 @@ import type {
   PluginWidgetRuntime,
   PersistedTabDTO,
   PersistedWidgetDTO,
-} from '../Types/plugin-runtime';
+} from '../types/plugin-runtime';
 
 export function sanitizeTabs(
   tabs: Array<PluginTabRuntime<any>>

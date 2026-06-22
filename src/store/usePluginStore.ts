@@ -4,7 +4,7 @@ import { persist } from 'zustand/middleware';
 import type {
   PersistedTabDTO,
   PersistedWidgetDTO,
-} from '../Types/plugin-runtime';
+} from '../types/plugin-runtime';
 
 type PluginStatuses = Record<string, { status: string; name?: string }>;
 

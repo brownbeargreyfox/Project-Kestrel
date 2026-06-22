@@ -1,6 +1,6 @@
 // src/store/pluginStore.ts - Plugin slice for Zustand store
 import { StateCreator } from 'zustand';
-import { TabDef, WidgetDef } from '../Types/plugin';
+import { TabDef, WidgetDef } from '../types/plugin';
 
 export interface PluginState {
   // Plugin system state
