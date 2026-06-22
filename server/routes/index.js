@@ -10,6 +10,7 @@ import reference from './reference.js';
 import capabilities from './capabilities.js';
 import aida from './aida.js';
 import telemetry from './telemetry.js';
+import modelCatalog from './modelCatalog.js';
 
 const router = Router();
 
@@ -25,5 +26,6 @@ router.use('/reference', reference);
 router.use('/capabilities', capabilities);
 router.use('/aida', aida);
 router.use('/telemetry', telemetry);
+router.use('/model-catalog', modelCatalog);
 
 export default router;
