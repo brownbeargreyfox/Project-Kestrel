@@ -4,7 +4,7 @@
 // dependency is added. Bundle with esbuild (already present transitively via
 // Vite) and run with Node's built-in test runner:
 //
-//   npx esbuild src/components/os/apps/NetworkRiskExplainerPanel.test.ts \
+//   npx esbuild src/components/os/apps/networkRiskExplainerHelpers.test.ts \
 //     --bundle --platform=node --format=esm --outfile=tmp.test.mjs
 //   node tmp.test.mjs && rm tmp.test.mjs
 //
@@ -18,7 +18,7 @@ import {
   readChecks,
   readBrokerRequest,
   type ExplainResponse,
-} from './NetworkRiskExplainerPanel.js';
+} from './networkRiskExplainerHelpers.js';
 
 const DEVICE = { deviceKey: 'abc', ip: '192.168.1.1', mac: 'aa:bb:cc:dd:ee:ff' };
 
