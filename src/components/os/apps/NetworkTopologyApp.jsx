@@ -14,7 +14,7 @@ import {
   Tags,
   Wifi,
 } from 'lucide-react';
-import NetworkRiskExplainer from './NetworkRiskExplainer';
+import NetworkRiskExplainerPanel from './NetworkRiskExplainerPanel';
 
 const KIND_LABELS = {
   'router/gateway': 'Router / Gateway',
@@ -503,7 +503,7 @@ export default function NetworkTopologyApp() {
                   <ShieldAlert size={16} />
                   Explain this finding
                 </div>
-                <NetworkRiskExplainer device={selectedDevice} />
+                <NetworkRiskExplainerPanel device={selectedDevice} />
               </div>
 
               <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4" data-testid="network-device-identity">
