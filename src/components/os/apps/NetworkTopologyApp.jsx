@@ -14,6 +14,7 @@ import {
   Tags,
   Wifi,
 } from 'lucide-react';
+import NetworkRiskExplainer from './NetworkRiskExplainer';
 
 const KIND_LABELS = {
   'router/gateway': 'Router / Gateway',
@@ -495,6 +496,14 @@ export default function NetworkTopologyApp() {
                     No current local risk signals for this device.
                   </div>
                 )}
+              </div>
+
+              <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4" data-testid="network-risk-explainer">
+                <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                  <ShieldAlert size={16} />
+                  Explain this finding
+                </div>
+                <NetworkRiskExplainer device={selectedDevice} />
               </div>
 
               <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4" data-testid="network-device-identity">
