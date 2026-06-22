@@ -1,8 +1,8 @@
-// src/components/os/apps/IntentMemoryContext.jsx
+// src/components/os/apps/AssetMemoryContext.jsx
 //
-// Read-only MAIA context for a single action intent inside the Capability Center.
-// Given the intent's asset, it lazily fetches related deterministic MAIA memory
-// so the operator can review prior history before approving/rejecting.
+// Read-only MAIA context for a single asset (an AIDA intent's asset, a network
+// device, etc.). Given an assetId it lazily fetches related deterministic MAIA
+// memory so the operator can review prior history in place.
 //
 // MAIA informs, never acts: this only reads /api/maia and renders provenance.
 // No model/broker calls, no remediation, no writes.
@@ -29,7 +29,7 @@ function pct(value) {
   return `${Math.round((Number(value) || 0) * 100)}%`;
 }
 
-export default function IntentMemoryContext({ assetId, assetName }) {
+export default function AssetMemoryContext({ assetId, assetName, title = 'MAIA memory for this asset' }) {
   const [open, setOpen] = React.useState(false);
   const [loaded, setLoaded] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
@@ -73,16 +73,16 @@ export default function IntentMemoryContext({ assetId, assetName }) {
   const isEmpty = loaded && insights.length === 0 && nodes.length === 0;
 
   return (
-    <div className="mt-3 border-t border-neutral-800 pt-3" data-testid="intent-maia-context">
+    <div className="mt-3 border-t border-neutral-800 pt-3" data-testid="asset-maia-context">
       <button
         type="button"
         onClick={toggle}
         aria-expanded={open}
         className="inline-flex items-center gap-1.5 rounded-lg border border-sky-900 bg-sky-950/30 px-2.5 py-1 text-xs text-sky-200 hover:bg-sky-900/40"
-        data-testid="intent-maia-toggle"
+        data-testid="asset-maia-toggle"
       >
         {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-        <Brain size={13} /> MAIA memory for this asset
+        <Brain size={13} /> {title}
       </button>
 
       {open && (
@@ -146,7 +146,7 @@ export default function IntentMemoryContext({ assetId, assetName }) {
                 <li
                   key={node.id}
                   className="rounded border border-neutral-800/70 bg-neutral-900/70 px-2 py-1 text-[11px] text-neutral-400"
-                  data-testid="intent-maia-node"
+                  data-testid="asset-maia-node"
                 >
                   <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-300">
                     {KIND_LABELS[node.kind] || node.kind}

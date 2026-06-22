@@ -5,9 +5,49 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { safeAppendMemoryNode } from '../lib/maiaMemory.js';
 
 const execFileAsync = promisify(execFile);
 const router = Router();
+
+function getActor(req) {
+  return req.headers['x-kestrel-actor'] || process.env.KESTREL_DEFAULT_ACTOR || 'local-admin';
+}
+
+// ── MAIA memory mapping (pure, unit-tested in network.maia.test.js) ─────────────
+// A label patch that carries no real classification is a "clear" — it deletes the
+// label and records no memory.
+export function isClearedLabelPatch(patch) {
+  return !patch.label && patch.trustState === 'unknown' && !patch.notes && patch.tags.length === 0 && !patch.kind;
+}
+
+export function buildLabelMemoryInput(key, patch, ctx = {}) {
+  const name = patch.label || key;
+  return {
+    kind: 'operator.note',
+    source: 'operator',
+    assetId: key,
+    assetName: name,
+    summary: `Labeled device ${name} as trust=${patch.trustState}${patch.kind ? `, kind=${patch.kind}` : ''}.`,
+    detail: patch.notes || undefined,
+    tags: ['network', 'label', patch.trustState, patch.kind, ...patch.tags],
+    confidence: { value: 0.9, basis: 'Operator-asserted device classification.', lowCoverage: false },
+    provenance: { route: ctx.route, actor: ctx.actor, sourceEventType: 'network.label.saved' },
+  };
+}
+
+export function buildAckMemoryInput(key, ctx = {}) {
+  return {
+    kind: 'operator.note',
+    source: 'operator',
+    assetId: key,
+    assetName: key,
+    summary: `Acknowledged newly-seen device ${key}.`,
+    tags: ['network', 'acknowledge'],
+    confidence: { value: 0.9, basis: 'Operator acknowledged a new device.', lowCoverage: false },
+    provenance: { route: ctx.route, actor: ctx.actor, sourceEventType: 'network.device.acknowledged' },
+  };
+}
 const STATE_DIR = path.resolve(process.cwd(), '.kestrel');
 const LABELS_FILE = path.join(STATE_DIR, 'network-device-labels.json');
 const HISTORY_FILE = path.join(STATE_DIR, 'network-device-history.json');
@@ -614,13 +654,22 @@ router.post('/labels', async (req, res) => {
     const labels = await readLabels();
     const patch = sanitizeLabelPatch(req.body);
 
-    if (!patch.label && patch.trustState === 'unknown' && !patch.notes && patch.tags.length === 0 && !patch.kind) {
+    const cleared = isClearedLabelPatch(patch);
+    if (cleared) {
       delete labels[key];
     } else {
       labels[key] = patch;
     }
 
     await writeLabels(labels);
+
+    // MAIA append-only record of the operator classification (non-blocking).
+    if (!cleared) {
+      safeAppendMemoryNode(
+        buildLabelMemoryInput(key, patch, { actor: getActor(req), route: req.originalUrl?.split('?')[0] }),
+      );
+    }
+
     return res.json({ ok: true, key, label: labels[key] ?? null, labels });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message ?? 'Failed to save label' });
@@ -651,6 +700,8 @@ router.post('/devices/acknowledge', async (req, res) => {
 
     const history = await readHistory();
     const acknowledgedAt = new Date().toISOString();
+    const actor = getActor(req);
+    const route = req.originalUrl?.split('?')[0];
 
     for (const key of keys) {
       if (!/^(mac:([0-9a-f]{2}:){5}[0-9a-f]{2}|ip:\d+\.\d+\.\d+\.\d+)$/.test(key)) continue;
@@ -658,6 +709,9 @@ router.post('/devices/acknowledge', async (req, res) => {
         ...(history[key] ?? { firstSeen: acknowledgedAt, seenCount: 0 }),
         acknowledgedAt,
       };
+
+      // MAIA append-only record that the operator vetted this newly-seen device.
+      safeAppendMemoryNode(buildAckMemoryInput(key, { actor, route }));
     }
 
     await writeHistory(history);
