@@ -22,6 +22,7 @@ import crypto from 'node:crypto';
 import { getInfraState } from '../lib/infraState.js';
 import { buildObservation, buildRecommendations, ENGINE_VERSION } from '../lib/aidaEngine.js';
 import { broadcast } from '../lib/eventBus.js';
+import { safeAppendMemoryNode } from '../lib/maiaMemory.js';
 
 const router = Router();
 
@@ -41,6 +42,27 @@ function getActor(req) {
 function sanitize(value, max = 1000) {
   if (typeof value !== 'string') return '';
   return value.trim().slice(0, max);
+}
+
+function routePath(req) {
+  return (req.originalUrl || '').split('?')[0];
+}
+
+// Map an AIDA recommendation confidence into a MAIA confidence, with a
+// deterministic fallback when AIDA did not attach one.
+function maiaConfidence(conf) {
+  if (conf && typeof conf === 'object' && Number.isFinite(conf.value)) {
+    return {
+      value: conf.value,
+      basis: conf.basis || 'Derived from AIDA recommendation confidence.',
+      lowCoverage: Boolean(conf.lowCoverage),
+    };
+  }
+  return { value: 0.5, basis: 'Deterministic fallback: no AIDA confidence available.', lowCoverage: true };
+}
+
+function assetTypeOf(name) {
+  return typeof name === 'string' && name.includes('-') ? name.split('-')[0] : '';
 }
 
 async function appendJsonLine(filePath, payload) {
@@ -220,13 +242,32 @@ router.post('/recommendations/:id/accept', async (req, res) => {
     severity: intent.severity,
     origin:   'aida',
   });
-  await writeAudit(req, {
+  const acceptAudit = await writeAudit(req, {
     type: 'aida.recommendation.accepted',
     capability: rec.suggestedCapability,
     outcome: 'pending-review',
     detail: rec.title,
     recommendationId: rec.id,
     intentId: intent.id,
+  });
+
+  // MAIA append-only record (non-blocking — must never break the operator flow).
+  safeAppendMemoryNode({
+    kind: 'aida.recommendation.accepted',
+    source: 'aida',
+    assetId: rec.assetId,
+    assetName: rec.assetName,
+    summary: `Accepted "${rec.title}" → pending-approval intent created.`,
+    detail: rec.suggestedAction,
+    tags: [rec.severity, 'recommendation', 'accepted', assetTypeOf(rec.assetName)],
+    confidence: maiaConfidence(rec.confidence),
+    provenance: {
+      route: routePath(req),
+      actor: getActor(req),
+      recommendationId: rec.id,
+      auditId: acceptAudit.id,
+      sourceEventType: 'aida.recommendation.accepted',
+    },
   });
 
   return res.status(202).json({
@@ -259,12 +300,30 @@ router.post('/recommendations/:id/dismiss', async (req, res) => {
   };
 
   await appendJsonLine(REFLECTIONS_FILE, reflection);
-  await writeAudit(req, {
+  const dismissAudit = await writeAudit(req, {
     type: 'aida.recommendation.dismissed',
     capability: 'data:recommendations.read',
     outcome: 'dismissed',
     detail: `${rec.title} — ${reason}`,
     recommendationId: rec.id,
+  });
+
+  safeAppendMemoryNode({
+    kind: 'aida.recommendation.dismissed',
+    source: 'aida',
+    assetId: rec.assetId,
+    assetName: rec.assetName,
+    summary: `Dismissed "${rec.title}".`,
+    detail: reason,
+    tags: [rec.severity, 'recommendation', 'dismissed', assetTypeOf(rec.assetName)],
+    confidence: maiaConfidence(rec.confidence),
+    provenance: {
+      route: routePath(req),
+      actor: getActor(req),
+      recommendationId: rec.id,
+      auditId: dismissAudit.id,
+      sourceEventType: 'aida.recommendation.dismissed',
+    },
   });
 
   return res.json({ ok: true, reflection });
@@ -384,13 +443,31 @@ router.post('/simulate', async (req, res) => {
   const cascadeRiskBefore = dependentsBefore.reduce((s, a) => s + a.risk, 0) / Math.max(1, dependentsBefore.length);
   const cascadeRiskAfter  = dependentsAfter.reduce((s, a) => s + a.risk, 0) / Math.max(1, dependentsAfter.length);
 
-  await writeAudit(req, {
+  const simAudit = await writeAudit(req, {
     type: 'aida.simulate',
     capability: 'data:metrics.read',
     outcome: 'allowed',
     detail: `Simulation: ${scenario.label} on ${asset.name}. Risk delta: ${(riskDelta * 100).toFixed(1)}%.`,
     assetId,
     scenario: scenarioKey,
+  });
+
+  safeAppendMemoryNode({
+    kind: 'aida.simulation.run',
+    source: 'aida',
+    assetId,
+    assetName: asset.name,
+    summary: `Simulated "${scenario.label}" on ${asset.name} → projected risk reduction ${Math.round(-riskDelta * 100)}%.`,
+    detail: scenario.description,
+    tags: [scenarioKey, 'simulation', asset.type, asset.tier],
+    confidence: { value: 0.6, basis: 'Deterministic projection from the current observation.', lowCoverage: false },
+    provenance: {
+      route: routePath(req),
+      actor: getActor(req),
+      simulationId: simAudit.id,
+      auditId: simAudit.id,
+      sourceEventType: 'aida.simulate',
+    },
   });
 
   res.json({

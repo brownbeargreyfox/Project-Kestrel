@@ -10,6 +10,7 @@ import {
   PlayCircle, ArrowRightLeft,
 } from 'lucide-react';
 import { useMAIAStore } from '../../../store/useMAIAStore';
+import MAIAMemoryPanel from './MAIAMemoryPanel';
 
 const SEVERITY_CLASSES = {
   critical: 'border-red-800 bg-red-950/70 text-red-200',
@@ -687,7 +688,15 @@ export default function AIDASentinelWorkspace() {
 
         {/* ======================= MEMORY ======================= */}
         {pillar === 'memory' && (
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2" data-testid="aida-memory">
+          <div className="space-y-4" data-testid="aida-memory">
+            {/* Durable, server-backed append-only memory (MAIA v0) */}
+            <MAIAMemoryPanel />
+
+            <div className="text-xs text-neutral-500">
+              Local session memory (legacy · this browser only) — superseded by MAIA durable memory above.
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
             <section className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
               <div className="mb-3 flex items-center gap-2 font-semibold"><Brain size={17} /> Decision log (MAIA)</div>
               {recommendationLog.length === 0 ? (
@@ -728,6 +737,7 @@ export default function AIDASentinelWorkspace() {
                 </div>
               )}
             </section>
+            </div>
           </div>
         )}
 
