@@ -10,11 +10,15 @@
 //      when no agents are connected. Exists so AIDA has something meaningful to
 //      reason about during development / demo. Shows a MOCK badge in the UI.
 //
+// Local manual assets from .kestrel/manual-assets.json are merged into either
+// live or mock state so non-agent infrastructure can still be observed/simulated.
+//
 // The AIDA engine is unaware of which source is active — it only sees the
 // { serverOverview, serverTypes, datacenters } schema.
 
 import mockServerData from '../../src/data/mockserverdata.js';
 import { hasRealData, getLiveInfraState } from './liveState.js';
+import { mergeManualAssets } from './manualAssets.js';
 
 // ── mock drift (only used when no real agents) ────────────────────────────────
 let mockState  = null;
@@ -62,9 +66,9 @@ export function stopEvolution() {
 // ── public API ────────────────────────────────────────────────────────────────
 
 export function getInfraState() {
-  if (hasRealData()) return getLiveInfraState();
+  if (hasRealData()) return mergeManualAssets(getLiveInfraState());
   ensureMockStarted();
-  return mockState;
+  return mergeManualAssets(mockState);
 }
 
 export function getDataMode() {
