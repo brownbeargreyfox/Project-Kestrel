@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { CheckCircle2, GitBranch, KeyRound, ListChecks, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
-import IntentMemoryContext from './IntentMemoryContext';
+import AssetMemoryContext from './AssetMemoryContext';
 
 const RISK_CLASSES = {
   low:      'border-emerald-800 bg-emerald-950/70 text-emerald-200',
@@ -374,7 +374,7 @@ export default function CapabilityCenterApp() {
 
                     {/* Read-only MAIA memory for this asset (interpretation, not automation) */}
                     {intent.assetId && (
-                      <IntentMemoryContext assetId={intent.assetId} assetName={intent.assetName} />
+                      <AssetMemoryContext assetId={intent.assetId} assetName={intent.assetName} />
                     )}
 
                     {isPending && (

@@ -13,8 +13,10 @@ import {
   ShieldAlert,
   Tags,
   Wifi,
+  Brain,
 } from 'lucide-react';
 import NetworkRiskExplainerPanel from './NetworkRiskExplainerPanel';
+import AssetMemoryContext from './AssetMemoryContext';
 
 const KIND_LABELS = {
   'router/gateway': 'Router / Gateway',
@@ -504,6 +506,21 @@ export default function NetworkTopologyApp() {
                   Explain this finding
                 </div>
                 <NetworkRiskExplainerPanel device={selectedDevice} />
+              </div>
+
+              <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4" data-testid="network-device-memory">
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <Brain size={16} />
+                  Device memory (MAIA)
+                </div>
+                <p className="mt-1 text-xs text-neutral-500">
+                  Durable record of what operators labeled or acknowledged for this device. Interpretation, not automation.
+                </p>
+                <AssetMemoryContext
+                  assetId={selectedDevice.deviceKey}
+                  assetName={formatDeviceName(selectedDevice)}
+                  title="Show MAIA memory for this device"
+                />
               </div>
 
               <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4" data-testid="network-device-identity">
