@@ -33,12 +33,14 @@ async function json(method, url, body) {
 
 test('manual asset smoke: action flag -> add -> preset update -> MAIA memory -> restore -> delete', async () => {
   const originalCwd = process.cwd();
-  const originalFlag = process.env.VITE_FF_WORKFLOW_ACTIONS;
+  const originalServerFlag = process.env.KESTREL_WORKFLOW_ACTIONS;
+  const originalClientFlag = process.env.VITE_FF_WORKFLOW_ACTIONS;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kestrel-manual-assets-'));
   let server;
 
   try {
     process.chdir(tmp);
+    delete process.env.KESTREL_WORKFLOW_ACTIONS;
     delete process.env.VITE_FF_WORKFLOW_ACTIONS;
 
     const [{ default: manualAssets }, { default: maia }] = await Promise.all([
@@ -81,9 +83,9 @@ test('manual asset smoke: action flag -> add -> preset update -> MAIA memory -> 
     const blockedAdd = await json('POST', `${base}/api/aida/assets/manual`, assetBody);
     assert.equal(blockedAdd.res.status, 403);
     assert.equal(blockedAdd.data.ok, false);
-    assert.match(blockedAdd.data.error, /VITE_FF_WORKFLOW_ACTIONS=true/);
+    assert.match(blockedAdd.data.error, /KESTREL_WORKFLOW_ACTIONS=true/);
 
-    process.env.VITE_FF_WORKFLOW_ACTIONS = 'true';
+    process.env.KESTREL_WORKFLOW_ACTIONS = 'true';
 
     const add = await json('POST', `${base}/api/aida/assets/manual`, assetBody);
     assert.equal(add.res.status, 201);
@@ -140,8 +142,10 @@ test('manual asset smoke: action flag -> add -> preset update -> MAIA memory -> 
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));
     process.chdir(originalCwd);
-    if (originalFlag === undefined) delete process.env.VITE_FF_WORKFLOW_ACTIONS;
-    else process.env.VITE_FF_WORKFLOW_ACTIONS = originalFlag;
+    if (originalServerFlag === undefined) delete process.env.KESTREL_WORKFLOW_ACTIONS;
+    else process.env.KESTREL_WORKFLOW_ACTIONS = originalServerFlag;
+    if (originalClientFlag === undefined) delete process.env.VITE_FF_WORKFLOW_ACTIONS;
+    else process.env.VITE_FF_WORKFLOW_ACTIONS = originalClientFlag;
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
