@@ -640,6 +640,17 @@ export default function AIDASentinelWorkspace() {
 
             {simResult && (
               <div className="space-y-3">
+                {simResult.assetSelection?.recovered && (
+                  <div
+                    className="rounded-lg border border-amber-900/60 bg-amber-950/30 p-3 text-xs text-amber-200"
+                    role="status"
+                    data-testid="aida-sim-recovered-notice"
+                  >
+                    The selected asset (<span className="font-mono">{simResult.assetSelection.requestedAssetId}</span>)
+                    was no longer in the current observation, so AIDA simulated the highest-priority current asset
+                    (<span className="font-mono text-amber-100">{simResult.asset.name}</span>) instead.
+                  </div>
+                )}
                 <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
                   <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
                     <ArrowRightLeft size={16} className="text-sky-300" />
