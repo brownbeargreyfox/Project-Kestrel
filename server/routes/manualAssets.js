@@ -31,22 +31,25 @@ export function buildManualAssetMemoryInput(asset, ctx = {}) {
     source: 'operator',
     assetId: asset.id,
     assetName: asset.name,
-    summary: `Added manual asset ${asset.name} (${asset.type}) in ${asset.datacenter}/${asset.tier}.`,
+    summary: `Manual asset added: ${asset.name} (${asset.type}) in ${asset.datacenter}/${asset.tier}.`,
     detail: asset.ip ? `ip ${asset.ip}` : undefined,
-    tags: ['manual-asset', 'added', asset.type, asset.tier, asset.criticality, asset.status],
+    tags: ['manual-asset', 'asset-added', asset.type, asset.tier, asset.criticality, asset.status],
     confidence: { value: 0.9, basis: 'Operator added a manual asset.', lowCoverage: false },
     provenance: { route: ctx.route, actor: ctx.actor, sourceEventType: 'aida.manual-asset.added' },
   };
 }
 
-export function buildManualAssetDeleteMemoryInput(id, ctx = {}) {
+export function buildManualAssetDeleteMemoryInput(asset, ctx = {}) {
+  const id = typeof asset === 'string' ? asset : asset?.id;
+  const name = typeof asset === 'string' ? asset : asset?.name || asset?.id;
   return {
     kind: 'operator.note',
     source: 'operator',
     assetId: id,
-    assetName: id,
-    summary: `Removed manual asset ${id}.`,
-    tags: ['manual-asset', 'removed'],
+    assetName: name,
+    summary: `Manual asset removed: ${name}.`,
+    detail: typeof asset === 'object' && asset?.ip ? `ip ${asset.ip}` : undefined,
+    tags: ['manual-asset', 'asset-removed', ...(typeof asset === 'object' ? [asset.type, asset.tier, asset.criticality, asset.status] : [])],
     confidence: { value: 0.9, basis: 'Operator removed a manual asset.', lowCoverage: false },
     provenance: { route: ctx.route, actor: ctx.actor, sourceEventType: 'aida.manual-asset.removed' },
   };
@@ -74,9 +77,10 @@ router.post('/', (req, res) => {
 router.delete('/:id', (req, res) => {
   try {
     const id = sanitizeId(req.params.id);
+    const existing = listManualAssets().find((asset) => asset.id === id);
     const deleted = deleteManualAsset(id);
     if (deleted) {
-      safeAppendMemoryNode(buildManualAssetDeleteMemoryInput(id, { actor: getActor(req), route: routePath(req) }));
+      safeAppendMemoryNode(buildManualAssetDeleteMemoryInput(existing || id, { actor: getActor(req), route: routePath(req) }));
     }
     return res.json({ ok: true, id, deleted });
   } catch (err) {
