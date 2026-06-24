@@ -20,6 +20,18 @@ function stableJson(value) {
   return JSON.stringify(value ?? null);
 }
 
+export function isWorkflowActionsEnabled(env = process.env) {
+  return env.VITE_FF_WORKFLOW_ACTIONS === 'true';
+}
+
+function requireWorkflowActions(req, res, next) {
+  if (isWorkflowActionsEnabled()) return next();
+  return res.status(403).json({
+    ok: false,
+    error: 'Manual asset actions are disabled. Set VITE_FF_WORKFLOW_ACTIONS=true to enable add, update, and delete.',
+  });
+}
+
 function getActor(req) {
   return req.headers['x-kestrel-actor'] || process.env.KESTREL_DEFAULT_ACTOR || 'local-admin';
 }
@@ -117,7 +129,7 @@ router.get('/', (req, res) => {
   }
 });
 
-router.post('/', (req, res) => {
+router.post('/', requireWorkflowActions, (req, res) => {
   try {
     const asset = upsertManualAsset(req.body || {});
     safeAppendMemoryNode(buildManualAssetMemoryInput(asset, { actor: getActor(req), route: routePath(req) }));
@@ -127,7 +139,7 @@ router.post('/', (req, res) => {
   }
 });
 
-router.put('/:id', (req, res) => {
+router.put('/:id', requireWorkflowActions, (req, res) => {
   try {
     const id = sanitizeId(req.params.id);
     const existing = findManualAsset(id);
@@ -140,7 +152,7 @@ router.put('/:id', (req, res) => {
   }
 });
 
-router.delete('/:id', (req, res) => {
+router.delete('/:id', requireWorkflowActions, (req, res) => {
   try {
     const id = sanitizeId(req.params.id);
     const existing = findManualAsset(id);

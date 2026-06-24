@@ -31,13 +31,15 @@ async function json(method, url, body) {
   return { res, data };
 }
 
-test('manual asset smoke: add -> preset update -> MAIA memory -> restore -> delete', async () => {
+test('manual asset smoke: action flag -> add -> preset update -> MAIA memory -> restore -> delete', async () => {
   const originalCwd = process.cwd();
+  const originalFlag = process.env.VITE_FF_WORKFLOW_ACTIONS;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kestrel-manual-assets-'));
   let server;
 
   try {
     process.chdir(tmp);
+    delete process.env.VITE_FF_WORKFLOW_ACTIONS;
 
     const [{ default: manualAssets }, { default: maia }] = await Promise.all([
       import('./manualAssets.js'),
@@ -71,6 +73,17 @@ test('manual asset smoke: add -> preset update -> MAIA memory -> restore -> dele
         connections: 8,
       },
     };
+
+    const readWhenDisabled = await json('GET', `${base}/api/aida/assets/manual`);
+    assert.equal(readWhenDisabled.res.status, 200);
+    assert.equal(readWhenDisabled.data.ok, true);
+
+    const blockedAdd = await json('POST', `${base}/api/aida/assets/manual`, assetBody);
+    assert.equal(blockedAdd.res.status, 403);
+    assert.equal(blockedAdd.data.ok, false);
+    assert.match(blockedAdd.data.error, /VITE_FF_WORKFLOW_ACTIONS=true/);
+
+    process.env.VITE_FF_WORKFLOW_ACTIONS = 'true';
 
     const add = await json('POST', `${base}/api/aida/assets/manual`, assetBody);
     assert.equal(add.res.status, 201);
@@ -127,6 +140,8 @@ test('manual asset smoke: add -> preset update -> MAIA memory -> restore -> dele
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));
     process.chdir(originalCwd);
+    if (originalFlag === undefined) delete process.env.VITE_FF_WORKFLOW_ACTIONS;
+    else process.env.VITE_FF_WORKFLOW_ACTIONS = originalFlag;
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
