@@ -16,6 +16,10 @@ function sanitizeId(value) {
   return typeof value === 'string' ? value.trim().slice(0, 120) : '';
 }
 
+function stableJson(value) {
+  return JSON.stringify(value ?? null);
+}
+
 function getActor(req) {
   return req.headers['x-kestrel-actor'] || process.env.KESTREL_DEFAULT_ACTOR || 'local-admin';
 }
@@ -48,6 +52,7 @@ function changedFields(before = {}, after = {}) {
   for (const key of METRIC_FIELDS) {
     if (Number(before.metrics?.[key] ?? 0) !== Number(after.metrics?.[key] ?? 0)) changed.push(`metrics.${key}`);
   }
+  if (stableJson(before.currentIncident) !== stableJson(after.currentIncident)) changed.push('currentIncident');
   return changed;
 }
 
@@ -71,14 +76,17 @@ export function buildManualAssetMemoryInput(asset, ctx = {}) {
 
 export function buildManualAssetUpdateMemoryInput(before, after, ctx = {}) {
   const fields = changedFields(before, after);
+  const incidentType = after.currentIncident?.type;
   return {
     kind: 'operator.note',
     source: 'operator',
     assetId: after.id,
     assetName: after.name,
-    summary: `Manual asset updated: ${after.name}.`,
+    summary: incidentType
+      ? `Manual asset updated: ${after.name} (${incidentType}).`
+      : `Manual asset updated: ${after.name}.`,
     detail: fields.length ? `changed ${fields.join(', ')}` : 'no material field changes detected',
-    tags: ['manual-asset', 'asset-updated', after.type, after.tier, after.criticality, after.status],
+    tags: ['manual-asset', 'asset-updated', after.type, after.tier, after.criticality, after.status, ...(incidentType ? [incidentType] : [])],
     confidence: { value: 0.9, basis: 'Operator updated a manual asset.', lowCoverage: false },
     provenance: { route: ctx.route, actor: ctx.actor, sourceEventType: 'aida.manual-asset.updated' },
   };
