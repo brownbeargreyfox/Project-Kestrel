@@ -5,11 +5,51 @@
 
 import { Router } from 'express';
 import { deleteManualAsset, listManualAssets, upsertManualAsset } from '../lib/manualAssets.js';
+import { safeAppendMemoryNode } from '../lib/maiaMemory.js';
 
 const router = Router();
 
 function sanitizeId(value) {
   return typeof value === 'string' ? value.trim().slice(0, 120) : '';
+}
+
+function getActor(req) {
+  return req.headers['x-kestrel-actor'] || process.env.KESTREL_DEFAULT_ACTOR || 'local-admin';
+}
+
+function routePath(req) {
+  return (req.originalUrl || '').split('?')[0];
+}
+
+// ── MAIA memory mapping (pure, unit-tested in manualAssets.maia.test.js) ────────
+// Manual asset add/remove are operator decisions worth remembering. These build
+// the append-only MAIA node input; the route appends them non-blocking so MAIA
+// failure never breaks add/delete.
+export function buildManualAssetMemoryInput(asset, ctx = {}) {
+  return {
+    kind: 'operator.note',
+    source: 'operator',
+    assetId: asset.id,
+    assetName: asset.name,
+    summary: `Added manual asset ${asset.name} (${asset.type}) in ${asset.datacenter}/${asset.tier}.`,
+    detail: asset.ip ? `ip ${asset.ip}` : undefined,
+    tags: ['manual-asset', 'added', asset.type, asset.tier, asset.criticality, asset.status],
+    confidence: { value: 0.9, basis: 'Operator added a manual asset.', lowCoverage: false },
+    provenance: { route: ctx.route, actor: ctx.actor, sourceEventType: 'aida.manual-asset.added' },
+  };
+}
+
+export function buildManualAssetDeleteMemoryInput(id, ctx = {}) {
+  return {
+    kind: 'operator.note',
+    source: 'operator',
+    assetId: id,
+    assetName: id,
+    summary: `Removed manual asset ${id}.`,
+    tags: ['manual-asset', 'removed'],
+    confidence: { value: 0.9, basis: 'Operator removed a manual asset.', lowCoverage: false },
+    provenance: { route: ctx.route, actor: ctx.actor, sourceEventType: 'aida.manual-asset.removed' },
+  };
 }
 
 router.get('/', (req, res) => {
@@ -24,6 +64,7 @@ router.get('/', (req, res) => {
 router.post('/', (req, res) => {
   try {
     const asset = upsertManualAsset(req.body || {});
+    safeAppendMemoryNode(buildManualAssetMemoryInput(asset, { actor: getActor(req), route: routePath(req) }));
     return res.status(201).json({ ok: true, asset });
   } catch (err) {
     return res.status(400).json({ ok: false, error: err?.message ?? 'Failed to save manual asset.' });
@@ -34,6 +75,9 @@ router.delete('/:id', (req, res) => {
   try {
     const id = sanitizeId(req.params.id);
     const deleted = deleteManualAsset(id);
+    if (deleted) {
+      safeAppendMemoryNode(buildManualAssetDeleteMemoryInput(id, { actor: getActor(req), route: routePath(req) }));
+    }
     return res.json({ ok: true, id, deleted });
   } catch (err) {
     return res.status(500).json({ ok: false, error: err?.message ?? 'Failed to delete manual asset.' });
