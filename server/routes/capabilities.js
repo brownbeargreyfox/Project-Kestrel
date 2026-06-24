@@ -2,8 +2,35 @@ import { Router } from 'express';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { safeAppendMemoryNode } from '../lib/maiaMemory.js';
 
 const router = Router();
+
+// ── MAIA memory mapping (pure, unit-tested in capabilities.maia.test.js) ────────
+// Approving/rejecting a pending intent is the human-in-the-loop decision point —
+// exactly what MAIA should remember. Keyed by the intent's assetId so it unifies
+// with the AIDA recommend/accept history for that asset.
+export function buildIntentResolutionMemoryInput(intent, resolution, ctx = {}) {
+  const status = resolution === 'approve' ? 'approved' : 'rejected';
+  const input = {
+    kind: 'operator.note',
+    source: 'operator',
+    assetName: intent.assetName || intent.title || intent.id,
+    summary: `Intent ${status}: ${intent.title || intent.id}.`,
+    detail: ctx.note || undefined,
+    tags: ['intent', status, intent.severity, intent.capability].filter(Boolean),
+    confidence: { value: 0.95, basis: `Operator ${status} a pending action intent.`, lowCoverage: false },
+    provenance: {
+      route: ctx.route,
+      actor: ctx.actor,
+      recommendationId: intent.recommendationId,
+      auditId: ctx.auditId,
+      sourceEventType: `intent.${status}`,
+    },
+  };
+  if (intent.assetId) input.assetId = intent.assetId;
+  return input;
+}
 const STATE_DIR = path.resolve(process.cwd(), '.kestrel');
 const AUDIT_FILE = path.join(STATE_DIR, 'audit-log.jsonl');
 const INTENTS_FILE = path.join(STATE_DIR, 'action-intents.jsonl');
@@ -212,7 +239,7 @@ async function resolveIntent(req, res, resolution) {
 
   await rewriteIntents(all);
 
-  await writeAuditEvent(req, {
+  const audit = await writeAuditEvent(req, {
     type: `intent.${resolution}d`,
     capability: 'system:action.approve',
     outcome: resolution === 'approve' ? 'approved' : 'rejected',
@@ -221,6 +248,16 @@ async function resolveIntent(req, res, resolution) {
     origin: intent.origin || 'manual',
     assetId: intent.assetId || null,
   });
+
+  // MAIA append-only record of the human-in-the-loop decision (non-blocking).
+  safeAppendMemoryNode(
+    buildIntentResolutionMemoryInput(intent, resolution, {
+      actor: getActor(req),
+      route: (req.originalUrl || '').split('?')[0],
+      auditId: audit.id,
+      note,
+    }),
+  );
 
   return res.json({ ok: true, intent: all[idx] });
 }
