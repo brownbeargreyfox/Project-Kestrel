@@ -21,6 +21,8 @@ function stableJson(value) {
 }
 
 export function isWorkflowActionsEnabled(env = process.env) {
+  if (env.KESTREL_WORKFLOW_ACTIONS === 'true') return true;
+  if (env.KESTREL_WORKFLOW_ACTIONS === 'false') return false;
   return env.VITE_FF_WORKFLOW_ACTIONS === 'true';
 }
 
@@ -28,7 +30,7 @@ function requireWorkflowActions(req, res, next) {
   if (isWorkflowActionsEnabled()) return next();
   return res.status(403).json({
     ok: false,
-    error: 'Manual asset actions are disabled. Set VITE_FF_WORKFLOW_ACTIONS=true to enable add, update, and delete.',
+    error: 'Manual asset actions are disabled. Set KESTREL_WORKFLOW_ACTIONS=true to enable add, update, and delete.',
   });
 }
 
