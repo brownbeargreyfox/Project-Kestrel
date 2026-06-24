@@ -6,7 +6,8 @@
 // .kestrel/manual-assets.json (backend-owned).
 
 import React from 'react';
-import { Server, RefreshCw, Trash2 } from 'lucide-react';
+import { Server, RefreshCw, Trash2, Pencil } from 'lucide-react';
+import ManualAssetEditor from './ManualAssetEditor';
 import ManualAssetMemoryContext from './ManualAssetMemoryContext';
 import {
   DEFAULT_MANUAL_ASSET_FORM,
@@ -67,6 +68,7 @@ export default function ManualAssetsPanel() {
   const [error, setError] = React.useState(null);
   const [submitting, setSubmitting] = React.useState(false);
   const [busyId, setBusyId] = React.useState(null);
+  const [editingId, setEditingId] = React.useState(null);
   const [form, setForm] = React.useState(DEFAULT_MANUAL_ASSET_FORM);
 
   const load = React.useCallback(async () => {
@@ -121,12 +123,18 @@ export default function ManualAssetsPanel() {
       const res = await fetch(`/api/aida/assets/manual/${encodeURIComponent(asset.id)}`, { method: 'DELETE' });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || `Failed to delete manual asset (HTTP ${res.status})`);
+      if (editingId === asset.id) setEditingId(null);
       await load();
     } catch (err) {
       setError(err?.message ?? 'Failed to delete manual asset');
     } finally {
       setBusyId(null);
     }
+  };
+
+  const onSaved = async () => {
+    setEditingId(null);
+    await load();
   };
 
   return (
@@ -200,17 +208,29 @@ export default function ManualAssetsPanel() {
                       {asset.ip ? `${asset.ip} · ` : ''}{asset.type} · {asset.datacenter} · {asset.tier} · {asset.criticality} · {asset.status}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => remove(asset)}
-                    disabled={busyId === asset.id}
-                    aria-label={`Delete manual asset ${asset.name}`}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-900 bg-red-950/40 px-2.5 py-1 text-xs text-red-200 hover:bg-red-900/50 disabled:opacity-50"
-                    data-testid="manual-assets-delete"
-                  >
-                    <Trash2 size={13} /> {busyId === asset.id ? 'Removing…' : 'Delete'}
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEditingId((current) => (current === asset.id ? null : asset.id))}
+                      aria-expanded={editingId === asset.id}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
+                      data-testid="manual-assets-edit"
+                    >
+                      <Pencil size={13} /> {editingId === asset.id ? 'Close edit' : 'Edit'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => remove(asset)}
+                      disabled={busyId === asset.id}
+                      aria-label={`Delete manual asset ${asset.name}`}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-red-900 bg-red-950/40 px-2.5 py-1 text-xs text-red-200 hover:bg-red-900/50 disabled:opacity-50"
+                      data-testid="manual-assets-delete"
+                    >
+                      <Trash2 size={13} /> {busyId === asset.id ? 'Removing…' : 'Delete'}
+                    </button>
+                  </div>
                 </div>
+                {editingId === asset.id && <ManualAssetEditor asset={asset} onCancel={() => setEditingId(null)} onSaved={onSaved} />}
                 <ManualAssetMemoryContext assetId={asset.id} assetName={asset.name} />
               </li>
             ))}
