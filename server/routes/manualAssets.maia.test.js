@@ -10,7 +10,9 @@ import assert from 'node:assert/strict';
 
 import {
   buildManualAssetMemoryInput,
+  buildManualAssetUpdateMemoryInput,
   buildManualAssetDeleteMemoryInput,
+  mergeManualAssetUpdate,
 } from './manualAssets.js';
 import { createMemoryNode } from '../lib/maiaMemory.js';
 
@@ -25,6 +27,14 @@ const ASSET = {
   criticality: 'medium',
   status: 'online',
   ip: '192.0.2.5',
+  metrics: {
+    cpuUsage: 12,
+    memoryUsage: 35,
+    diskUsage: 55,
+    networkLatency: 4,
+    storageIO: 800,
+    connections: 8,
+  },
 };
 
 test('buildManualAssetMemoryInput maps an added asset to an operator memory node', () => {
@@ -55,6 +65,36 @@ test('an asset without an ip omits the detail line', () => {
   assert.equal(node.detail, undefined);
 });
 
+test('mergeManualAssetUpdate preserves identity and merges nested metrics', () => {
+  const merged = mergeManualAssetUpdate(ASSET, {
+    id: 'manual:other-id',
+    ip: '192.0.2.99',
+    status: 'warning',
+    metrics: { memoryUsage: 72 },
+  });
+  assert.equal(merged.id, 'manual:media-01');
+  assert.equal(merged.ip, '192.0.2.99');
+  assert.equal(merged.status, 'warning');
+  assert.equal(merged.metrics.cpuUsage, 12);
+  assert.equal(merged.metrics.memoryUsage, 72);
+});
+
+test('buildManualAssetUpdateMemoryInput maps changed fields to an operator memory node', () => {
+  const after = mergeManualAssetUpdate(ASSET, { status: 'warning', criticality: 'high', metrics: { memoryUsage: 72 } });
+  const input = buildManualAssetUpdateMemoryInput(ASSET, after, { actor: 'op3', route: '/api/aida/assets/manual/manual:media-01' });
+  assert.equal(input.kind, 'operator.note');
+  assert.equal(input.source, 'operator');
+  assert.equal(input.assetId, 'manual:media-01');
+  assert.equal(input.assetName, 'media-01');
+  assert.match(input.summary, /Manual asset updated: media-01/);
+  assert.match(input.detail, /status/);
+  assert.match(input.detail, /criticality/);
+  assert.match(input.detail, /metrics.memoryUsage/);
+  assert.deepEqual(input.tags, ['manual-asset', 'asset-updated', 'media-server', 'app-tier', 'high', 'warning']);
+  assert.equal(input.provenance.sourceEventType, 'aida.manual-asset.updated');
+  assert.equal(input.provenance.actor, 'op3');
+});
+
 test('buildManualAssetDeleteMemoryInput maps a removal to a descriptive operator memory node', () => {
   const input = buildManualAssetDeleteMemoryInput(ASSET, {
     actor: 'op2',
@@ -78,8 +118,11 @@ test('remove mapping can fall back to id-only when the previous asset record is 
   assert.deepEqual(input.tags, ['manual-asset', 'asset-removed']);
 });
 
-test('add and remove nodes share the same assetId so device history is unified', () => {
+test('add, update, and remove nodes share the same assetId so device history is unified', () => {
   const add = createMemoryNode(buildManualAssetMemoryInput(ASSET, CTX));
+  const after = mergeManualAssetUpdate(ASSET, { status: 'warning' });
+  const update = createMemoryNode(buildManualAssetUpdateMemoryInput(ASSET, after, CTX));
   const remove = createMemoryNode(buildManualAssetDeleteMemoryInput(ASSET, CTX));
-  assert.equal(add.assetId, remove.assetId);
+  assert.equal(add.assetId, update.assetId);
+  assert.equal(update.assetId, remove.assetId);
 });
