@@ -7,6 +7,7 @@
 
 import React from 'react';
 import { Server, RefreshCw, Trash2 } from 'lucide-react';
+import ManualAssetMemoryContext from './ManualAssetMemoryContext';
 import {
   DEFAULT_MANUAL_ASSET_FORM,
   METRIC_BOUNDS,
@@ -172,7 +173,6 @@ export default function ManualAssetsPanel() {
         </div>
       )}
 
-      {/* Current manual assets */}
       <div className="mt-3">
         {loading && assets.length === 0 ? (
           <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-4 text-sm text-neutral-400">
@@ -190,32 +190,34 @@ export default function ManualAssetsPanel() {
             {assets.map((asset) => (
               <li
                 key={asset.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-neutral-800 bg-neutral-950 p-3"
+                className="rounded-lg border border-neutral-800 bg-neutral-950 p-3"
                 data-testid="manual-assets-row"
               >
-                <div className="min-w-0">
-                  <div className="font-medium text-neutral-100">{asset.name}</div>
-                  <div className="mt-0.5 text-xs text-neutral-500">
-                    {asset.ip ? `${asset.ip} · ` : ''}{asset.type} · {asset.datacenter} · {asset.tier} · {asset.criticality} · {asset.status}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-medium text-neutral-100">{asset.name}</div>
+                    <div className="mt-0.5 text-xs text-neutral-500">
+                      {asset.ip ? `${asset.ip} · ` : ''}{asset.type} · {asset.datacenter} · {asset.tier} · {asset.criticality} · {asset.status}
+                    </div>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => remove(asset)}
+                    disabled={busyId === asset.id}
+                    aria-label={`Delete manual asset ${asset.name}`}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-900 bg-red-950/40 px-2.5 py-1 text-xs text-red-200 hover:bg-red-900/50 disabled:opacity-50"
+                    data-testid="manual-assets-delete"
+                  >
+                    <Trash2 size={13} /> {busyId === asset.id ? 'Removing…' : 'Delete'}
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => remove(asset)}
-                  disabled={busyId === asset.id}
-                  aria-label={`Delete manual asset ${asset.name}`}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-red-900 bg-red-950/40 px-2.5 py-1 text-xs text-red-200 hover:bg-red-900/50 disabled:opacity-50"
-                  data-testid="manual-assets-delete"
-                >
-                  <Trash2 size={13} /> {busyId === asset.id ? 'Removing…' : 'Delete'}
-                </button>
+                <ManualAssetMemoryContext assetId={asset.id} assetName={asset.name} />
               </li>
             ))}
           </ul>
         )}
       </div>
 
-      {/* Add form */}
       <form onSubmit={submit} className="mt-4 space-y-3" data-testid="manual-assets-form">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Text id="ma-ip" label="IP (or provide a name)" value={form.ip} onChange={(v) => setField('ip', v)} placeholder="optional IPv4 address" />
