@@ -34,6 +34,61 @@ export const DEFAULT_MANUAL_ASSET_FORM = {
   },
 };
 
+export const MANUAL_ASSET_SIMULATION_PRESETS = [
+  {
+    id: 'high-latency',
+    label: 'Simulate high latency',
+    description: 'Raise network latency and connections while keeping the asset reachable.',
+    patch: {
+      status: 'warning',
+      metrics: { networkLatency: 950, connections: 2500 },
+      currentIncident: {
+        type: 'manual-preset.high-latency',
+        description: 'Operator-applied manual high latency preset.',
+        injected: true,
+      },
+    },
+  },
+  {
+    id: 'disk-pressure',
+    label: 'Simulate disk pressure',
+    description: 'Raise disk usage and lower storage IO to model storage pressure.',
+    patch: {
+      status: 'critical',
+      metrics: { diskUsage: 94, storageIO: 120, networkLatency: 25 },
+      currentIncident: {
+        type: 'manual-preset.disk-pressure',
+        description: 'Operator-applied manual disk pressure preset.',
+        injected: true,
+      },
+    },
+  },
+  {
+    id: 'offline',
+    label: 'Simulate offline',
+    description: 'Mark the asset offline and zero active connections.',
+    patch: {
+      status: 'offline',
+      metrics: { networkLatency: 5000, connections: 0, storageIO: 0 },
+      currentIncident: {
+        type: 'manual-preset.offline',
+        description: 'Operator-applied manual offline preset.',
+        injected: true,
+      },
+    },
+  },
+  {
+    id: 'restore-online',
+    label: 'Restore online',
+    description: 'Clear the manual preset incident and return to safe online defaults.',
+    patch: {
+      status: 'online',
+      metrics: { cpuUsage: 12, memoryUsage: 35, diskUsage: 55, networkLatency: 4, storageIO: 800, connections: 8 },
+      currentIncident: null,
+    },
+  },
+];
+
 export function clampNumber(value, min, max) {
   const n = Number(value);
   if (!Number.isFinite(n)) return min;
@@ -66,5 +121,28 @@ export function buildManualAssetPayload(form = {}) {
     criticality: form.criticality,
     status: form.status,
     metrics: clampMetrics(form.metrics),
+    ...(Object.prototype.hasOwnProperty.call(form, 'currentIncident') ? { currentIncident: form.currentIncident } : {}),
   };
+}
+
+export function buildManualAssetPresetPayload(asset = {}, presetId) {
+  const preset = MANUAL_ASSET_SIMULATION_PRESETS.find((item) => item.id === presetId);
+  if (!preset) throw new Error(`Unknown manual asset simulation preset: ${presetId}`);
+
+  return buildManualAssetPayload({
+    id: asset.id,
+    ip: asset.ip || '',
+    name: asset.name || '',
+    os: asset.os || '',
+    type: asset.type || 'server',
+    datacenter: asset.datacenter || 'home-lab',
+    tier: asset.tier || 'app-tier',
+    criticality: asset.criticality || 'medium',
+    status: preset.patch.status || asset.status || 'online',
+    metrics: {
+      ...(asset.metrics || {}),
+      ...(preset.patch.metrics || {}),
+    },
+    currentIncident: preset.patch.currentIncident,
+  });
 }
