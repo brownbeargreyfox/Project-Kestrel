@@ -95,6 +95,23 @@ test('buildManualAssetUpdateMemoryInput maps changed fields to an operator memor
   assert.equal(input.provenance.actor, 'op3');
 });
 
+test('buildManualAssetUpdateMemoryInput includes manual preset incident context', () => {
+  const after = mergeManualAssetUpdate(ASSET, {
+    status: 'warning',
+    metrics: { networkLatency: 950 },
+    currentIncident: {
+      type: 'manual-preset.high-latency',
+      description: 'Operator-applied manual high latency preset.',
+      injected: true,
+    },
+  });
+  const input = buildManualAssetUpdateMemoryInput(ASSET, after, CTX);
+  assert.match(input.summary, /manual-preset.high-latency/);
+  assert.match(input.detail, /currentIncident/);
+  assert.match(input.detail, /metrics.networkLatency/);
+  assert.ok(input.tags.includes('manual-preset.high-latency'));
+});
+
 test('buildManualAssetDeleteMemoryInput maps a removal to a descriptive operator memory node', () => {
   const input = buildManualAssetDeleteMemoryInput(ASSET, {
     actor: 'op2',

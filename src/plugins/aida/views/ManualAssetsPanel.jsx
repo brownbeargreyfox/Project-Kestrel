@@ -9,6 +9,7 @@ import React from 'react';
 import { Server, RefreshCw, Trash2, Pencil } from 'lucide-react';
 import ManualAssetEditor from './ManualAssetEditor';
 import ManualAssetMemoryContext from './ManualAssetMemoryContext';
+import ManualAssetSimulationPresets from './ManualAssetSimulationPresets';
 import {
   DEFAULT_MANUAL_ASSET_FORM,
   METRIC_BOUNDS,
@@ -231,6 +232,7 @@ export default function ManualAssetsPanel() {
                   </div>
                 </div>
                 {editingId === asset.id && <ManualAssetEditor asset={asset} onCancel={() => setEditingId(null)} onSaved={onSaved} />}
+                <ManualAssetSimulationPresets asset={asset} onApplied={load} />
                 <ManualAssetMemoryContext assetId={asset.id} assetName={asset.name} />
               </li>
             ))}
