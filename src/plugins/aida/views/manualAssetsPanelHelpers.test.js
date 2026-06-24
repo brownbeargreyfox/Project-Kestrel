@@ -13,9 +13,31 @@ import {
   clampMetrics,
   hasRequiredIdentity,
   buildManualAssetPayload,
+  buildManualAssetPresetPayload,
   DEFAULT_MANUAL_ASSET_FORM,
   METRIC_BOUNDS,
+  MANUAL_ASSET_SIMULATION_PRESETS,
 } from './manualAssetsPanelHelpers.js';
+
+const ASSET = {
+  id: 'manual:media-01',
+  ip: '192.0.2.5',
+  name: 'media-01',
+  os: 'Ubuntu Server',
+  type: 'media-server',
+  datacenter: 'home-lab',
+  tier: 'app-tier',
+  criticality: 'medium',
+  status: 'online',
+  metrics: {
+    cpuUsage: 12,
+    memoryUsage: 35,
+    diskUsage: 55,
+    networkLatency: 4,
+    storageIO: 800,
+    connections: 8,
+  },
+};
 
 test('clampNumber bounds values and falls back to min for non-finite input', () => {
   assert.equal(clampNumber(50, 0, 100), 50);
@@ -78,8 +100,42 @@ test('the default form is a valid, submittable home media server (no hardcoded I
   assert.equal(DEFAULT_MANUAL_ASSET_FORM.os, 'Ubuntu Server');
   assert.equal(DEFAULT_MANUAL_ASSET_FORM.type, 'media-server');
   assert.equal(DEFAULT_MANUAL_ASSET_FORM.datacenter, 'home-lab');
-  // Defaults alone lack identity; the operator must supply ip or name.
   assert.equal(hasRequiredIdentity(DEFAULT_MANUAL_ASSET_FORM), false);
   const payload = buildManualAssetPayload({ ...DEFAULT_MANUAL_ASSET_FORM, name: 'media-01' });
   assert.deepEqual(payload.metrics, DEFAULT_MANUAL_ASSET_FORM.metrics, 'in-range defaults pass through unchanged');
+});
+
+test('manual asset simulation presets expose only human-triggered local presets', () => {
+  assert.deepEqual(
+    MANUAL_ASSET_SIMULATION_PRESETS.map((preset) => preset.id),
+    ['high-latency', 'disk-pressure', 'offline', 'restore-online'],
+  );
+});
+
+test('high-latency preset preserves identity and raises latency without changing unrelated metrics', () => {
+  const payload = buildManualAssetPresetPayload(ASSET, 'high-latency');
+  assert.equal(payload.name, 'media-01');
+  assert.equal(payload.status, 'warning');
+  assert.equal(payload.metrics.networkLatency, 950);
+  assert.equal(payload.metrics.diskUsage, 55);
+  assert.equal(payload.currentIncident.type, 'manual-preset.high-latency');
+});
+
+test('disk-pressure and offline presets produce bounded metrics', () => {
+  const disk = buildManualAssetPresetPayload(ASSET, 'disk-pressure');
+  assert.equal(disk.status, 'critical');
+  assert.equal(disk.metrics.diskUsage, 94);
+  assert.equal(disk.metrics.storageIO, 120);
+
+  const offline = buildManualAssetPresetPayload(ASSET, 'offline');
+  assert.equal(offline.status, 'offline');
+  assert.equal(offline.metrics.networkLatency, 5000);
+  assert.equal(offline.metrics.connections, 0);
+});
+
+test('restore-online preset clears currentIncident and restores safe default metrics', () => {
+  const payload = buildManualAssetPresetPayload({ ...ASSET, status: 'offline' }, 'restore-online');
+  assert.equal(payload.status, 'online');
+  assert.equal(payload.metrics.networkLatency, 4);
+  assert.equal(payload.currentIncident, null);
 });
