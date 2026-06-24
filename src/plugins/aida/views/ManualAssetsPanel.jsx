@@ -4,6 +4,9 @@
 // UI-only on top of the existing /api/aida/assets/manual endpoints — no scanning,
 // pinging, discovery, agents, or background polling. State stays local under
 // .kestrel/manual-assets.json (backend-owned).
+//
+// Feature flags respected (via VITE_* env):
+//   VITE_FF_WORKFLOW_ACTIONS = 'true' — show add/edit/delete/preset controls
 
 import React from 'react';
 import { Server, RefreshCw, Trash2, Pencil } from 'lucide-react';
@@ -17,6 +20,8 @@ import {
   clampNumber,
   hasRequiredIdentity,
 } from './manualAssetsPanelHelpers';
+
+const FF_WORKFLOW_ACTIONS = import.meta.env['VITE_FF_WORKFLOW_ACTIONS'] === 'true';
 
 const TIERS = ['dmz', 'web-tier', 'app-tier', 'data-tier', 'management', 'cloud-hybrid'];
 const CRITICALITIES = ['low', 'medium', 'high', 'critical'];
@@ -94,6 +99,7 @@ export default function ManualAssetsPanel() {
 
   const submit = async (e) => {
     e.preventDefault();
+    if (!FF_WORKFLOW_ACTIONS) return;
     if (!hasRequiredIdentity(form)) {
       setError('Provide at least an IP or a name to identify the asset.');
       return;
@@ -118,6 +124,7 @@ export default function ManualAssetsPanel() {
   };
 
   const remove = async (asset) => {
+    if (!FF_WORKFLOW_ACTIONS) return;
     setBusyId(asset.id);
     setError(null);
     try {
@@ -165,6 +172,12 @@ export default function ManualAssetsPanel() {
         </button>
       </div>
 
+      {!FF_WORKFLOW_ACTIONS && (
+        <div className="mt-3 rounded-lg border border-neutral-800 bg-neutral-950 p-3 text-xs text-neutral-500" data-testid="manual-assets-actions-disabled">
+          Manual asset actions are hidden. Enable VITE_FF_WORKFLOW_ACTIONS to add, edit, delete, or apply presets.
+        </div>
+      )}
+
       {error && (
         <div
           className="mt-3 rounded-lg border border-red-900 bg-red-950/50 p-3 text-sm text-red-200"
@@ -209,30 +222,32 @@ export default function ManualAssetsPanel() {
                       {asset.ip ? `${asset.ip} · ` : ''}{asset.type} · {asset.datacenter} · {asset.tier} · {asset.criticality} · {asset.status}
                     </div>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setEditingId((current) => (current === asset.id ? null : asset.id))}
-                      aria-expanded={editingId === asset.id}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
-                      data-testid="manual-assets-edit"
-                    >
-                      <Pencil size={13} /> {editingId === asset.id ? 'Close edit' : 'Edit'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => remove(asset)}
-                      disabled={busyId === asset.id}
-                      aria-label={`Delete manual asset ${asset.name}`}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-red-900 bg-red-950/40 px-2.5 py-1 text-xs text-red-200 hover:bg-red-900/50 disabled:opacity-50"
-                      data-testid="manual-assets-delete"
-                    >
-                      <Trash2 size={13} /> {busyId === asset.id ? 'Removing…' : 'Delete'}
-                    </button>
-                  </div>
+                  {FF_WORKFLOW_ACTIONS && (
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setEditingId((current) => (current === asset.id ? null : asset.id))}
+                        aria-expanded={editingId === asset.id}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
+                        data-testid="manual-assets-edit"
+                      >
+                        <Pencil size={13} /> {editingId === asset.id ? 'Close edit' : 'Edit'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => remove(asset)}
+                        disabled={busyId === asset.id}
+                        aria-label={`Delete manual asset ${asset.name}`}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-red-900 bg-red-950/40 px-2.5 py-1 text-xs text-red-200 hover:bg-red-900/50 disabled:opacity-50"
+                        data-testid="manual-assets-delete"
+                      >
+                        <Trash2 size={13} /> {busyId === asset.id ? 'Removing…' : 'Delete'}
+                      </button>
+                    </div>
+                  )}
                 </div>
-                {editingId === asset.id && <ManualAssetEditor asset={asset} onCancel={() => setEditingId(null)} onSaved={onSaved} />}
-                <ManualAssetSimulationPresets asset={asset} onApplied={load} />
+                {FF_WORKFLOW_ACTIONS && editingId === asset.id && <ManualAssetEditor asset={asset} onCancel={() => setEditingId(null)} onSaved={onSaved} />}
+                {FF_WORKFLOW_ACTIONS && <ManualAssetSimulationPresets asset={asset} onApplied={load} />}
                 <ManualAssetMemoryContext assetId={asset.id} assetName={asset.name} />
               </li>
             ))}
@@ -240,51 +255,53 @@ export default function ManualAssetsPanel() {
         )}
       </div>
 
-      <form onSubmit={submit} className="mt-4 space-y-3" data-testid="manual-assets-form">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <Text id="ma-ip" label="IP (or provide a name)" value={form.ip} onChange={(v) => setField('ip', v)} placeholder="optional IPv4 address" />
-          <Text id="ma-name" label="Name" value={form.name} onChange={(v) => setField('name', v)} placeholder="e.g. media-01" />
-          <Text id="ma-os" label="OS" value={form.os} onChange={(v) => setField('os', v)} />
-          <Text id="ma-type" label="Type" value={form.type} onChange={(v) => setField('type', v)} />
-          <Text id="ma-datacenter" label="Datacenter" value={form.datacenter} onChange={(v) => setField('datacenter', v)} />
-          <Select id="ma-tier" label="Tier" value={form.tier} onChange={(v) => setField('tier', v)} options={TIERS} />
-          <Select id="ma-criticality" label="Criticality" value={form.criticality} onChange={(v) => setField('criticality', v)} options={CRITICALITIES} />
-          <Select id="ma-status" label="Status" value={form.status} onChange={(v) => setField('status', v)} options={STATUSES} />
-        </div>
+      {FF_WORKFLOW_ACTIONS && (
+        <form onSubmit={submit} className="mt-4 space-y-3" data-testid="manual-assets-form">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <Text id="ma-ip" label="IP (or provide a name)" value={form.ip} onChange={(v) => setField('ip', v)} placeholder="optional IPv4 address" />
+            <Text id="ma-name" label="Name" value={form.name} onChange={(v) => setField('name', v)} placeholder="e.g. media-01" />
+            <Text id="ma-os" label="OS" value={form.os} onChange={(v) => setField('os', v)} />
+            <Text id="ma-type" label="Type" value={form.type} onChange={(v) => setField('type', v)} />
+            <Text id="ma-datacenter" label="Datacenter" value={form.datacenter} onChange={(v) => setField('datacenter', v)} />
+            <Select id="ma-tier" label="Tier" value={form.tier} onChange={(v) => setField('tier', v)} options={TIERS} />
+            <Select id="ma-criticality" label="Criticality" value={form.criticality} onChange={(v) => setField('criticality', v)} options={CRITICALITIES} />
+            <Select id="ma-status" label="Status" value={form.status} onChange={(v) => setField('status', v)} options={STATUSES} />
+          </div>
 
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          {METRIC_FIELDS.map(({ key, label }) => {
-            const [min, max] = METRIC_BOUNDS[key];
-            return (
-              <label key={key} htmlFor={`ma-${key}`} className="block text-xs text-neutral-400">
-                <span className="mb-1 block">{label}</span>
-                <input
-                  id={`ma-${key}`}
-                  type="number"
-                  min={min}
-                  max={max}
-                  value={form.metrics[key]}
-                  onChange={(e) => setMetric(key, e.target.value)}
-                  onBlur={(e) => setMetric(key, clampNumber(e.target.value, min, max))}
-                  className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100 focus:border-sky-600 focus:outline-none"
-                />
-              </label>
-            );
-          })}
-        </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            {METRIC_FIELDS.map(({ key, label }) => {
+              const [min, max] = METRIC_BOUNDS[key];
+              return (
+                <label key={key} htmlFor={`ma-${key}`} className="block text-xs text-neutral-400">
+                  <span className="mb-1 block">{label}</span>
+                  <input
+                    id={`ma-${key}`}
+                    type="number"
+                    min={min}
+                    max={max}
+                    value={form.metrics[key]}
+                    onChange={(e) => setMetric(key, e.target.value)}
+                    onBlur={(e) => setMetric(key, clampNumber(e.target.value, min, max))}
+                    className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100 focus:border-sky-600 focus:outline-none"
+                  />
+                </label>
+              );
+            })}
+          </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="submit"
-            disabled={submitting}
-            className="inline-flex items-center gap-2 rounded-lg border border-emerald-800 bg-emerald-950/50 px-3 py-2 text-sm text-emerald-200 hover:bg-emerald-900/50 disabled:opacity-50"
-            data-testid="manual-assets-submit"
-          >
-            <Server size={15} /> {submitting ? 'Adding…' : 'Add manual asset'}
-          </button>
-          <span className="text-[11px] text-neutral-600">Saved locally under .kestrel/manual-assets.json</span>
-        </div>
-      </form>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="submit"
+              disabled={submitting}
+              className="inline-flex items-center gap-2 rounded-lg border border-emerald-800 bg-emerald-950/50 px-3 py-2 text-sm text-emerald-200 hover:bg-emerald-900/50 disabled:opacity-50"
+              data-testid="manual-assets-submit"
+            >
+              <Server size={15} /> {submitting ? 'Adding…' : 'Add manual asset'}
+            </button>
+            <span className="text-[11px] text-neutral-600">Saved locally under .kestrel/manual-assets.json</span>
+          </div>
+        </form>
+      )}
     </section>
   );
 }
