@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { useMAIAStore } from '../../../store/useMAIAStore';
 import MAIAMemoryPanel from './MAIAMemoryPanel';
+import ManualAssetsPanel from './ManualAssetsPanel';
 
 const SEVERITY_CLASSES = {
   critical: 'border-red-800 bg-red-950/70 text-red-200',
@@ -498,6 +499,8 @@ export default function AIDASentinelWorkspace() {
                 </div>
               )}
             </section>
+
+            <ManualAssetsPanel />
           </div>
         )}
 
