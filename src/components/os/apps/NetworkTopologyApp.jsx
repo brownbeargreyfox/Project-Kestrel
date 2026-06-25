@@ -14,9 +14,13 @@ import {
   Tags,
   Wifi,
   Brain,
+  ServerCog,
 } from 'lucide-react';
 import NetworkRiskExplainerPanel from './NetworkRiskExplainerPanel';
 import AssetMemoryContext from './AssetMemoryContext';
+import { networkDeviceToManualAsset, deviceDisplayName } from './networkDeviceToManualAsset';
+
+const FF_WORKFLOW_ACTIONS = import.meta.env['VITE_FF_WORKFLOW_ACTIONS'] === 'true';
 
 const KIND_LABELS = {
   'router/gateway': 'Router / Gateway',
@@ -321,6 +325,36 @@ export default function NetworkTopologyApp() {
     }
   }, [selectedDevice]);
 
+  const [sendingToAida, setSendingToAida] = React.useState(false);
+  const [aidaNotice, setAidaNotice] = React.useState(null); // { type: 'ok'|'err', text }
+
+  React.useEffect(() => { setAidaNotice(null); }, [selectedDevice?.deviceKey, selectedDevice?.ip]);
+
+  const sendDeviceToAida = React.useCallback(async () => {
+    if (!selectedDevice) return;
+    setSendingToAida(true);
+    setAidaNotice(null);
+    try {
+      const response = await fetch('/api/aida/assets/manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(networkDeviceToManualAsset(selectedDevice)),
+      });
+      const payload = await response.json();
+      if (response.status === 403) {
+        throw new Error('Manual asset actions are disabled. Enable the workflow-actions flag to add to AIDA.');
+      }
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || `Send to AIDA failed with HTTP ${response.status}`);
+      }
+      setAidaNotice({ type: 'ok', text: `Added "${deviceDisplayName(selectedDevice)}" to AIDA assets. Open AIDA Sentinel to observe or simulate it.` });
+    } catch (err) {
+      setAidaNotice({ type: 'err', text: err?.message ?? 'Failed to send device to AIDA' });
+    } finally {
+      setSendingToAida(false);
+    }
+  }, [selectedDevice]);
+
   const devices = inventory?.devices ?? [];
   const riskSummary = inventory?.riskSummary ?? { critical: 0, high: 0, medium: 0, low: 0, clear: 0 };
   const routerCount = devices.filter((device) => device.kind === 'router/gateway').length;
@@ -460,8 +494,30 @@ export default function NetworkTopologyApp() {
                         {acknowledging ? 'Acknowledging…' : 'Acknowledge new'}
                       </button>
                     )}
+                    {FF_WORKFLOW_ACTIONS && (
+                      <button
+                        type="button"
+                        onClick={sendDeviceToAida}
+                        disabled={sendingToAida}
+                        className="inline-flex items-center gap-2 rounded-lg border border-emerald-700 bg-emerald-950/70 px-3 py-2 text-sm text-emerald-100 hover:bg-emerald-900 disabled:opacity-50"
+                        data-testid="network-send-to-aida"
+                        title="Create an AIDA manual asset from this device so AIDA can observe and simulate it"
+                      >
+                        <ServerCog size={15} />
+                        {sendingToAida ? 'Adding…' : 'Send to AIDA'}
+                      </button>
+                    )}
                   </div>
                 </div>
+                {aidaNotice && (
+                  <div
+                    className={`mt-2 rounded-lg border p-2 text-xs ${aidaNotice.type === 'ok' ? 'border-emerald-900 bg-emerald-950/40 text-emerald-200' : 'border-red-900 bg-red-950/40 text-red-200'}`}
+                    role={aidaNotice.type === 'err' ? 'alert' : 'status'}
+                    data-testid="network-send-to-aida-notice"
+                  >
+                    {aidaNotice.text}
+                  </div>
+                )}
                 <div className="mt-2 flex flex-wrap gap-2 text-xs">
                   {selectedDevice.isNew && <span className="rounded-full border border-sky-700 bg-sky-950 px-2 py-1 text-sky-200">New device</span>}
                   <span className={`rounded-full border px-2 py-1 ${RISK_CLASSES[selectedRisk.level] || RISK_CLASSES.clear}`}>
