@@ -6,25 +6,7 @@
 
 import { AlertTriangle, Brain, GitBranch, Layers } from 'lucide-react';
 import type { MAIAInsight, MAIAMemoryNode } from '../../../types/maia';
-
-const KIND_LABELS: Record<string, string> = {
-  'aida.recommendation.accepted': 'Accepted',
-  'aida.recommendation.dismissed': 'Dismissed',
-  'aida.simulation.run': 'Simulation',
-  'aida.observation.insight': 'Observation',
-  'operator.note': 'Operator note',
-  'maia.correction': 'Correction',
-};
-
-function formatDate(value?: string | null) {
-  if (!value) return '—';
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
-}
-
-function pct(value: number) {
-  return `${Math.round((Number(value) || 0) * 100)}%`;
-}
+import { kindLabel, formatMemoryDate, pct } from '../../../components/os/apps/maiaPresentation';
 
 export function InsightCard({ insight }: { insight: MAIAInsight }) {
   return (
@@ -63,7 +45,7 @@ export function InsightCard({ insight }: { insight: MAIAInsight }) {
               className="rounded border border-neutral-800/70 bg-neutral-900/70 px-2 py-1 text-[11px] text-neutral-400"
             >
               <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-300">
-                {KIND_LABELS[node.kind] || node.kind}
+                {kindLabel(node.kind)}
               </span>{' '}
               <span className="text-neutral-300">{node.summary}</span>
               <span className="ml-1 font-mono text-neutral-600">· {node.id.slice(0, 12)}</span>
@@ -101,12 +83,12 @@ export function MemoryCard({ node }: { node: MAIAMemoryNode }) {
           <div className="text-sm text-neutral-100">{node.summary}</div>
           <div className="mt-0.5 text-xs text-neutral-500">
             {node.assetName ? `${node.assetName} · ` : ''}
-            {formatDate(node.ts)}
+            {formatMemoryDate(node.ts)}
             {node.revisionOf ? ' · revises a prior node' : ''}
           </div>
         </div>
         <span className="shrink-0 rounded-full border border-neutral-700 px-2 py-0.5 text-[10px] text-neutral-300">
-          {KIND_LABELS[node.kind] || node.kind}
+          {kindLabel(node.kind)}
         </span>
       </div>
 
