@@ -12,6 +12,7 @@ import {
 import { useMAIAStore } from '../../../store/useMAIAStore';
 import MAIAMemoryPanel from './MAIAMemoryPanel';
 import ManualAssetsPanel from './ManualAssetsPanel';
+import AssetMemoryContext from '../../../components/os/apps/AssetMemoryContext';
 
 const SEVERITY_CLASSES = {
   critical: 'border-red-800 bg-red-950/70 text-red-200',
@@ -494,6 +495,7 @@ export default function AIDASentinelWorkspace() {
                           <span key={s.key} className="rounded border border-neutral-800 bg-neutral-900 px-1.5 py-0.5 text-[11px] text-neutral-400">{s.label}</span>
                         ))}
                       </div>
+                      <AssetMemoryContext assetId={a.id} assetName={a.name} title="Prior MAIA decisions for this asset" />
                     </div>
                   ))}
                 </div>
