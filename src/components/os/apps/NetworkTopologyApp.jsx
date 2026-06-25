@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import NetworkRiskExplainerPanel from './NetworkRiskExplainerPanel';
 import AssetMemoryContext from './AssetMemoryContext';
+import DeviceReachabilityButton from './DeviceReachabilityButton';
 
 const KIND_LABELS = {
   'router/gateway': 'Router / Gateway',
@@ -498,6 +499,7 @@ export default function NetworkTopologyApp() {
                     No current local risk signals for this device.
                   </div>
                 )}
+                <DeviceReachabilityButton ip={selectedDevice.ip} />
               </div>
 
               <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4" data-testid="network-risk-explainer">

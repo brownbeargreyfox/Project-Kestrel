@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { safeAppendMemoryNode } from '../lib/maiaMemory.js';
+import { isWorkflowActionsEnabled } from './manualAssets.js';
 
 const execFileAsync = promisify(execFile);
 const router = Router();
@@ -13,6 +14,45 @@ const router = Router();
 function getActor(req) {
   return req.headers['x-kestrel-actor'] || process.env.KESTREL_DEFAULT_ACTOR || 'local-admin';
 }
+
+// ── Operator-triggered reachability probe (pure helpers unit-tested in
+// network.reachability.test.js) ────────────────────────────────────────────────
+// A single, validated, rate-limited ICMP echo. No DNS (IP only → no SSRF via
+// hostname), no shell (execFile args array), no background loops. ICMP no-reply
+// means "did not respond" — never inferred as "offline" or used to change state.
+
+// Validate + normalize a probe target. Allows public + RFC1918 unicast IPv4 and
+// blocks unspecified/loopback/link-local(metadata)/multicast/reserved/broadcast.
+export function validateProbeIp(value) {
+  const ip = typeof value === 'string' ? value.trim() : '';
+  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
+  if (!match) return { ok: false, error: 'Provide a valid IPv4 address.' };
+  const octets = match.slice(1, 5).map(Number);
+  if (octets.some((o) => o > 255)) return { ok: false, error: 'Invalid IPv4 octet (0-255).' };
+  const [a, b] = octets;
+  if (a === 0) return { ok: false, error: 'Unspecified addresses (0.0.0.0/8) cannot be probed.' };
+  if (a === 127) return { ok: false, error: 'Loopback addresses cannot be probed.' };
+  if (a === 169 && b === 254) return { ok: false, error: 'Link-local / metadata addresses cannot be probed.' };
+  if (a >= 224) return { ok: false, error: 'Multicast / reserved / broadcast addresses cannot be probed.' };
+  return { ok: true, ip: octets.join('.') };
+}
+
+// Fixed-window limiter with injectable clock for deterministic tests.
+export function createRateLimiter({ max = 20, windowMs = 60_000 } = {}) {
+  let windowStart = 0;
+  let count = 0;
+  return function take(now = Date.now()) {
+    if (now - windowStart >= windowMs) {
+      windowStart = now;
+      count = 0;
+    }
+    if (count >= max) return false;
+    count += 1;
+    return true;
+  };
+}
+
+const reachabilityLimiter = createRateLimiter({ max: 20, windowMs: 60_000 });
 
 // ── MAIA memory mapping (pure, unit-tested in network.maia.test.js) ─────────────
 // A label patch that carries no real classification is a "clear" — it deletes the
@@ -718,6 +758,36 @@ router.post('/devices/acknowledge', async (req, res) => {
     return res.json({ ok: true, acknowledgedAt, keys, history });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message ?? 'Failed to acknowledge devices' });
+  }
+});
+
+// Operator-triggered reachability probe. Gated behind the workflow-actions flag,
+// validated, rate-limited, single-host, bounded. Reports response only.
+router.post('/reachability', async (req, res) => {
+  if (!isWorkflowActionsEnabled()) {
+    return res.status(403).json({ ok: false, error: 'Reachability probes are disabled. Set KESTREL_WORKFLOW_ACTIONS=true to enable.' });
+  }
+
+  const target = validateProbeIp(req.body?.ip);
+  if (!target.ok) {
+    return res.status(400).json({ ok: false, error: target.error });
+  }
+
+  if (!reachabilityLimiter()) {
+    return res.status(429).json({ ok: false, error: 'Too many reachability probes. Wait a moment and try again.' });
+  }
+
+  try {
+    const responded = await pingHost(target.ip);
+    return res.json({
+      ok: true,
+      ip: target.ip,
+      responded,
+      ts: new Date().toISOString(),
+      note: 'ICMP probe only — no response does not necessarily mean the host is offline (echo may be blocked).',
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message ?? 'Reachability probe failed' });
   }
 });
 
