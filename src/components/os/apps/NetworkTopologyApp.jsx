@@ -20,6 +20,7 @@ import NetworkRiskExplainerPanel from './NetworkRiskExplainerPanel';
 import AssetMemoryContext from './AssetMemoryContext';
 import { networkDeviceToManualAsset, deviceDisplayName } from './networkDeviceToManualAsset';
 import DeviceReachabilityButton from './DeviceReachabilityButton';
+import { useUIStore } from '../../../store/useUIStore';
 
 const FF_WORKFLOW_ACTIONS = import.meta.env['VITE_FF_WORKFLOW_ACTIONS'] === 'true';
 
@@ -328,6 +329,7 @@ export default function NetworkTopologyApp() {
 
   const [sendingToAida, setSendingToAida] = React.useState(false);
   const [aidaNotice, setAidaNotice] = React.useState(null); // { type: 'ok'|'err', text }
+  const launchApp = useUIStore((s) => s.launchApp);
 
   React.useEffect(() => { setAidaNotice(null); }, [selectedDevice?.deviceKey, selectedDevice?.ip]);
 
@@ -516,7 +518,17 @@ export default function NetworkTopologyApp() {
                     role={aidaNotice.type === 'err' ? 'alert' : 'status'}
                     data-testid="network-send-to-aida-notice"
                   >
-                    {aidaNotice.text}
+                    <div>{aidaNotice.text}</div>
+                    {aidaNotice.type === 'ok' && (
+                      <button
+                        type="button"
+                        onClick={() => launchApp('aida-sentinel')}
+                        className="mt-1.5 inline-flex items-center gap-1.5 rounded border border-emerald-700 bg-emerald-950/60 px-2 py-1 text-[11px] text-emerald-100 hover:bg-emerald-900"
+                        data-testid="network-open-aida"
+                      >
+                        Open AIDA Sentinel →
+                      </button>
+                    )}
                   </div>
                 )}
                 <div className="mt-2 flex flex-wrap gap-2 text-xs">
