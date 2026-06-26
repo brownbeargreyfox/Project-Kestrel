@@ -13,6 +13,7 @@ import { useMAIAStore } from '../../../store/useMAIAStore';
 import MAIAMemoryPanel from './MAIAMemoryPanel';
 import ManualAssetsPanel from './ManualAssetsPanel';
 import AssetMemoryContext from '../../../components/os/apps/AssetMemoryContext';
+import MAIADecisionFeed from './MAIADecisionFeed';
 
 const SEVERITY_CLASSES = {
   critical: 'border-red-800 bg-red-950/70 text-red-200',
@@ -759,6 +760,8 @@ export default function AIDASentinelWorkspace() {
 
         {/* ======================= REFLECT ======================= */}
         {pillar === 'reflect' && (
+          <div className="space-y-4">
+          <MAIADecisionFeed />
           <section className="rounded-xl border border-neutral-800 bg-neutral-900 p-4" data-testid="aida-reflect">
             <div className="mb-3 flex items-center gap-2 font-semibold">
               <FlaskConical size={17} /> Reflection log
@@ -784,6 +787,7 @@ export default function AIDASentinelWorkspace() {
               </div>
             )}
           </section>
+          </div>
         )}
 
       </main>
