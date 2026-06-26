@@ -12,6 +12,7 @@ import {
 import { useMAIAStore } from '../../../store/useMAIAStore';
 import MAIAMemoryPanel from './MAIAMemoryPanel';
 import ManualAssetsPanel from './ManualAssetsPanel';
+import AIDAAssetMemoryContext from './AIDAAssetMemoryContext';
 import MAIADecisionFeed from './MAIADecisionFeed';
 
 const SEVERITY_CLASSES = {
@@ -495,6 +496,7 @@ export default function AIDASentinelWorkspace() {
                           <span key={s.key} className="rounded border border-neutral-800 bg-neutral-900 px-1.5 py-0.5 text-[11px] text-neutral-400">{s.label}</span>
                         ))}
                       </div>
+                      <AIDAAssetMemoryContext assetId={a.id} assetName={a.name} />
                     </div>
                   ))}
                 </div>
