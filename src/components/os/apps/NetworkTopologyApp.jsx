@@ -166,9 +166,11 @@ export default function NetworkTopologyApp() {
   const [inventory, setInventory] = React.useState(null);
   const [selectedIp, setSelectedIp] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
+  const [discovering, setDiscovering] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [acknowledging, setAcknowledging] = React.useState(false);
   const [error, setError] = React.useState(null);
+  const [discoveryNotice, setDiscoveryNotice] = React.useState(null); // { type: 'ok'|'err', text }
   const [saveMessage, setSaveMessage] = React.useState('');
   const [labelDraft, setLabelDraft] = React.useState('');
   const [trustDraft, setTrustDraft] = React.useState('unknown');
@@ -190,12 +192,11 @@ export default function NetworkTopologyApp() {
     setSaveMessage('');
   }, [selectedDevice?.deviceKey, selectedDevice?.ip]);
 
-  const loadInventory = React.useCallback(async (mode = 'passive') => {
+  const loadInventory = React.useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const qs = mode === 'ping' ? '?scan=ping' : '';
-      const response = await fetch(`/api/network/devices${qs}`);
+      const response = await fetch('/api/network/devices');
       const payload = await response.json();
       if (!response.ok || !payload.ok) {
         throw new Error(payload.error || `Network inventory failed with HTTP ${response.status}`);
@@ -213,7 +214,36 @@ export default function NetworkTopologyApp() {
   }, []);
 
   React.useEffect(() => {
-    loadInventory('passive');
+    loadInventory();
+  }, [loadInventory]);
+
+  const runDiscovery = React.useCallback(async () => {
+    setDiscovering(true);
+    setError(null);
+    setDiscoveryNotice(null);
+    try {
+      const response = await fetch('/api/network/discovery/ping-sweep', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'operator requested discovery' }),
+      });
+      const payload = await response.json();
+      if (response.status === 403) {
+        throw new Error('Network discovery is disabled. Set KESTREL_NETWORK_DISCOVERY=true on the server to run bounded local ICMP discovery.');
+      }
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || `Network discovery failed with HTTP ${response.status}`);
+      }
+      setDiscoveryNotice({
+        type: 'ok',
+        text: `Discovery complete: ${payload.aliveCount ?? 0} responsive of ${payload.targetCount ?? 0} targets. Refreshing passive inventory.`,
+      });
+      await loadInventory();
+    } catch (err) {
+      setDiscoveryNotice({ type: 'err', text: err?.message ?? 'Failed to run network discovery' });
+    } finally {
+      setDiscovering(false);
+    }
   }, [loadInventory]);
 
   const saveDeviceLabel = React.useCallback(async () => {
@@ -386,7 +416,7 @@ export default function NetworkTopologyApp() {
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => loadInventory('passive')}
+              onClick={loadInventory}
               disabled={loading}
               className="inline-flex items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800 disabled:opacity-50"
               data-testid="network-refresh-passive"
@@ -394,16 +424,24 @@ export default function NetworkTopologyApp() {
               <RefreshCw size={16} className={loading ? 'animate-spin motion-reduce:animate-none' : ''} />
               Refresh Passive
             </button>
-            <button
-              type="button"
-              onClick={() => loadInventory('ping')}
-              disabled={loading}
-              className="inline-flex items-center gap-2 rounded-lg border border-sky-700 bg-sky-950/70 px-3 py-2 text-sm hover:bg-sky-900 disabled:opacity-50"
-              data-testid="network-refresh-ping"
-            >
-              <Radar size={16} />
-              Ping Sweep /24
-            </button>
+            {FF_WORKFLOW_ACTIONS && (
+              <div className="flex max-w-xs flex-col gap-1">
+                <button
+                  type="button"
+                  onClick={runDiscovery}
+                  disabled={loading || discovering}
+                  className="inline-flex items-center gap-2 rounded-lg border border-sky-700 bg-sky-950/70 px-3 py-2 text-sm hover:bg-sky-900 disabled:opacity-50"
+                  data-testid="network-run-discovery"
+                  title="Run bounded local ICMP discovery"
+                >
+                  <Radar size={16} />
+                  {discovering ? 'Discovering…' : 'Run Discovery'}
+                </button>
+                <span className="text-[11px] text-neutral-500">
+                  Sends bounded ICMP probes only on networks you administer.
+                </span>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -446,6 +484,16 @@ export default function NetworkTopologyApp() {
         </div>
       )}
 
+      {discoveryNotice && (
+        <div
+          className={`mx-4 mt-4 rounded-lg border p-3 text-sm ${discoveryNotice.type === 'ok' ? 'border-sky-900 bg-sky-950/40 text-sky-100' : 'border-red-900 bg-red-950/40 text-red-200'}`}
+          role={discoveryNotice.type === 'err' ? 'alert' : 'status'}
+          data-testid="network-discovery-notice"
+        >
+          {discoveryNotice.text}
+        </div>
+      )}
+
       <main className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden p-4 lg:grid-cols-[minmax(360px,460px)_1fr]">
         <section className="min-h-0 overflow-auto rounded-xl border border-neutral-800 bg-neutral-950/60 p-3" data-testid="network-device-list">
           <div className="mb-3 flex items-center justify-between">
@@ -457,7 +505,7 @@ export default function NetworkTopologyApp() {
             <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-4 text-sm text-neutral-400">Reading local network inventory…</div>
           ) : devices.length === 0 ? (
             <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-4 text-sm text-neutral-400">
-              No devices found yet. Try “Ping Sweep /24” to populate the ARP cache.
+              No devices found yet. Run Discovery to populate the ARP cache, or wait for passive local inventory to observe devices.
             </div>
           ) : (
             <div className="space-y-2">
