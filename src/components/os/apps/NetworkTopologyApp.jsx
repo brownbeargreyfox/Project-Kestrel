@@ -19,6 +19,7 @@ import {
 import NetworkRiskExplainerPanel from './NetworkRiskExplainerPanel';
 import AssetMemoryContext from './AssetMemoryContext';
 import { networkDeviceToManualAsset, deviceDisplayName } from './networkDeviceToManualAsset';
+import DeviceReachabilityButton from './DeviceReachabilityButton';
 
 const FF_WORKFLOW_ACTIONS = import.meta.env['VITE_FF_WORKFLOW_ACTIONS'] === 'true';
 
@@ -554,6 +555,7 @@ export default function NetworkTopologyApp() {
                     No current local risk signals for this device.
                   </div>
                 )}
+                <DeviceReachabilityButton ip={selectedDevice.ip} />
               </div>
 
               <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-4" data-testid="network-risk-explainer">
