@@ -10,49 +10,15 @@ import { safeAppendMemoryNode } from '../lib/maiaMemory.js';
 const execFileAsync = promisify(execFile);
 const router = Router();
 
-function getActor(req) {
-  return req.headers['x-kestrel-actor'] || process.env.KESTREL_DEFAULT_ACTOR || 'local-admin';
-}
-
-// ── MAIA memory mapping (pure, unit-tested in network.maia.test.js) ─────────────
-// A label patch that carries no real classification is a "clear" — it deletes the
-// label and records no memory.
-export function isClearedLabelPatch(patch) {
-  return !patch.label && patch.trustState === 'unknown' && !patch.notes && patch.tags.length === 0 && !patch.kind;
-}
-
-export function buildLabelMemoryInput(key, patch, ctx = {}) {
-  const name = patch.label || key;
-  return {
-    kind: 'operator.note',
-    source: 'operator',
-    assetId: key,
-    assetName: name,
-    summary: `Labeled device ${name} as trust=${patch.trustState}${patch.kind ? `, kind=${patch.kind}` : ''}.`,
-    detail: patch.notes || undefined,
-    tags: ['network', 'label', patch.trustState, patch.kind, ...patch.tags],
-    confidence: { value: 0.9, basis: 'Operator-asserted device classification.', lowCoverage: false },
-    provenance: { route: ctx.route, actor: ctx.actor, sourceEventType: 'network.label.saved' },
-  };
-}
-
-export function buildAckMemoryInput(key, ctx = {}) {
-  return {
-    kind: 'operator.note',
-    source: 'operator',
-    assetId: key,
-    assetName: key,
-    summary: `Acknowledged newly-seen device ${key}.`,
-    tags: ['network', 'acknowledge'],
-    confidence: { value: 0.9, basis: 'Operator acknowledged a new device.', lowCoverage: false },
-    provenance: { route: ctx.route, actor: ctx.actor, sourceEventType: 'network.device.acknowledged' },
-  };
-}
 const STATE_DIR = path.resolve(process.cwd(), '.kestrel');
 const LABELS_FILE = path.join(STATE_DIR, 'network-device-labels.json');
 const HISTORY_FILE = path.join(STATE_DIR, 'network-device-history.json');
 const IDENTITY_CACHE_FILE = path.join(STATE_DIR, 'network-identity-cache.json');
 const ENABLE_EXTERNAL_IDENTITY_LOOKUP = process.env.KESTREL_ENABLE_EXTERNAL_IDENTITY_LOOKUP === 'true';
+const DISCOVERY_MAX_TARGETS = 256;
+const DISCOVERY_CONCURRENCY = 16;
+const DISCOVERY_PING_TIMEOUT_MS = 1500;
+
 const TRUST_STATES = new Set(['trusted', 'unknown', 'watch', 'blocked']);
 const DEVICE_KINDS = new Set([
   'router/gateway',
@@ -72,14 +38,24 @@ const PRIVATE_RANGES = [
   /^172\.(1[6-9]|2\d|3[0-1])\./,
 ];
 
+function getActor(req) {
+  return req.headers['x-kestrel-actor'] || process.env.KESTREL_DEFAULT_ACTOR || 'local-admin';
+}
+
+export function isNetworkDiscoveryEnabled(env = process.env) {
+  return env.KESTREL_NETWORK_DISCOVERY === 'true';
+}
+
 function isPrivateIPv4(ip) {
   return PRIVATE_RANGES.some((rx) => rx.test(ip));
 }
 
 function isUsableIPv4(ip) {
   if (!ip || !/^\d+\.\d+\.\d+\.\d+$/.test(ip)) return false;
+  const octets = ip.split('.').map(Number);
+  if (octets.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
   if (!isPrivateIPv4(ip)) return false;
-  const last = Number(ip.split('.').at(-1));
+  const last = octets.at(-1);
   return last > 0 && last < 255;
 }
 
@@ -169,6 +145,61 @@ async function readIdentityCache() {
 
 async function writeIdentityCache(cache) {
   return writeJsonFile(IDENTITY_CACHE_FILE, cache);
+}
+
+// ── MAIA memory mapping (pure, unit-tested in network.maia.test.js) ─────────────
+// A label patch that carries no real classification is a "clear" — it deletes the
+// label and records no memory.
+export function isClearedLabelPatch(patch) {
+  return !patch.label && patch.trustState === 'unknown' && !patch.notes && patch.tags.length === 0 && !patch.kind;
+}
+
+export function buildLabelMemoryInput(key, patch, ctx = {}) {
+  const name = patch.label || key;
+  return {
+    kind: 'operator.note',
+    source: 'operator',
+    assetId: key,
+    assetName: name,
+    summary: `Labeled device ${name} as trust=${patch.trustState}${patch.kind ? `, kind=${patch.kind}` : ''}.`,
+    detail: patch.notes || undefined,
+    tags: ['network', 'label', patch.trustState, patch.kind, ...patch.tags],
+    confidence: { value: 0.9, basis: 'Operator-asserted device classification.', lowCoverage: false },
+    provenance: { route: ctx.route, actor: ctx.actor, sourceEventType: 'network.label.saved' },
+  };
+}
+
+export function buildAckMemoryInput(key, ctx = {}) {
+  return {
+    kind: 'operator.note',
+    source: 'operator',
+    assetId: key,
+    assetName: key,
+    summary: `Acknowledged newly-seen device ${key}.`,
+    tags: ['network', 'acknowledge'],
+    confidence: { value: 0.9, basis: 'Operator acknowledged a new device.', lowCoverage: false },
+    provenance: { route: ctx.route, actor: ctx.actor, sourceEventType: 'network.device.acknowledged' },
+  };
+}
+
+export function buildDiscoveryMemoryInput(scan, ctx = {}) {
+  const reason = sanitizeText(scan.reason, 240);
+  return {
+    kind: 'operator.note',
+    source: 'operator',
+    assetId: `network:${scan.cidr}`,
+    assetName: scan.cidr,
+    summary: `Ran bounded ICMP discovery for ${scan.cidr}.`,
+    detail: [
+      `Targets: ${scan.targetCount}`,
+      `Responsive: ${scan.aliveCount}`,
+      `ElapsedMs: ${scan.elapsedMs}`,
+      reason ? `Reason: ${reason}` : null,
+    ].filter(Boolean).join('\n'),
+    tags: ['network', 'discovery', 'icmp', 'operator-triggered'],
+    confidence: { value: 0.9, basis: 'Operator-triggered bounded local ICMP discovery.', lowCoverage: false },
+    provenance: { route: ctx.route, actor: ctx.actor, sourceEventType: 'network.discovery.ping_sweep' },
+  };
 }
 
 function applyLabels(devices, labels) {
@@ -309,17 +340,38 @@ function inferDeviceKind(ip, mac) {
   return 'network-device';
 }
 
-function getScanTargets(interfaces) {
-  const targets = new Set();
-  for (const net of interfaces) {
-    const parts = net.ip.split('.');
-    if (parts.length !== 4) continue;
-    const prefix = parts.slice(0, 3).join('.');
-    for (let i = 1; i <= 254; i += 1) {
-      targets.add(`${prefix}.${i}`);
-    }
+function normalizeDiscoveryCidr(cidr, interfaces = []) {
+  const raw = sanitizeText(cidr, 32) || interfaces[0]?.cidr || '';
+  const match = raw.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)\/(\d{1,2})$/);
+  if (!match) throw new Error('Invalid discovery CIDR. Use a private IPv4 /24 such as 192.168.1.0/24.');
+
+  const octets = match.slice(1, 5).map(Number);
+  const prefix = Number(match[5]);
+  if (octets.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
+    throw new Error('Invalid discovery CIDR octets.');
   }
-  return [...targets].filter(isUsableIPv4).slice(0, 512);
+  if (prefix !== 24) {
+    throw new Error('Network Discovery v0 only allows bounded /24 ICMP discovery.');
+  }
+
+  const baseIp = `${octets[0]}.${octets[1]}.${octets[2]}.0`;
+  if (!isPrivateIPv4(baseIp)) {
+    throw new Error('Network discovery is limited to private RFC1918 IPv4 ranges.');
+  }
+
+  return `${octets[0]}.${octets[1]}.${octets[2]}.0/24`;
+}
+
+export function buildDiscoveryTargets(cidr, limit = DISCOVERY_MAX_TARGETS) {
+  const normalized = normalizeDiscoveryCidr(cidr, [{ cidr }]);
+  const prefix = normalized.split('/')[0].split('.').slice(0, 3).join('.');
+  const targets = [];
+  for (let i = 1; i <= 254; i += 1) {
+    const ip = `${prefix}.${i}`;
+    if (isUsableIPv4(ip)) targets.push(ip);
+    if (targets.length >= Math.min(limit, DISCOVERY_MAX_TARGETS)) break;
+  }
+  return targets;
 }
 
 async function pingHost(ip) {
@@ -328,7 +380,7 @@ async function pingHost(ip) {
     : ['-c', '1', '-W', '1', ip];
 
   try {
-    await execFileAsync('ping', args, { timeout: 1500, windowsHide: true });
+    await execFileAsync('ping', args, { timeout: DISCOVERY_PING_TIMEOUT_MS, windowsHide: true });
     return true;
   } catch {
     return false;
@@ -408,22 +460,10 @@ function buildResearchLinks(device, vendor) {
     .trim();
 
   return [
-    {
-      label: 'Search identity clues',
-      url: `https://duckduckgo.com/?q=${encodeURIComponent(`${queryBits} home network device`)}`,
-    },
-    {
-      label: 'Search MAC/OUI vendor',
-      url: `https://duckduckgo.com/?q=${encodeURIComponent(`${macPrefix || device.mac || device.ip} MAC OUI vendor`)}`,
-    },
-    {
-      label: 'IEEE registry',
-      url: 'https://regauth.standards.ieee.org/standards-ra-web/pub/view.html#registries',
-    },
-    {
-      label: 'Wireshark OUI lookup',
-      url: 'https://www.wireshark.org/tools/oui-lookup.html',
-    },
+    { label: 'Search identity clues', url: `https://duckduckgo.com/?q=${encodeURIComponent(`${queryBits} home network device`)}` },
+    { label: 'Search MAC/OUI vendor', url: `https://duckduckgo.com/?q=${encodeURIComponent(`${macPrefix || device.mac || device.ip} MAC OUI vendor`)}` },
+    { label: 'IEEE registry', url: 'https://regauth.standards.ieee.org/standards-ra-web/pub/view.html#registries' },
+    { label: 'Wireshark OUI lookup', url: 'https://www.wireshark.org/tools/oui-lookup.html' },
   ];
 }
 
@@ -434,7 +474,6 @@ async function lookupExternalVendor(device, cache) {
 
   const cached = cache[macPrefix];
   if (cached?.vendor) return { ...cached, source: 'identity-cache' };
-
   if (typeof fetch !== 'function') return null;
 
   const controller = new AbortController();
@@ -449,12 +488,7 @@ async function lookupExternalVendor(device, cache) {
     const vendor = sanitizeText(await response.text(), 96);
     if (!vendor) return null;
 
-    const record = {
-      vendor,
-      source: 'macvendors',
-      macPrefix,
-      cachedAt: new Date().toISOString(),
-    };
+    const record = { vendor, source: 'macvendors', macPrefix, cachedAt: new Date().toISOString() };
     cache[macPrefix] = record;
     await writeIdentityCache(cache);
     return record;
@@ -531,7 +565,6 @@ async function resolveDeviceIdentity(device) {
 
   const family = inferFamilyFromText(normalized, vendor);
   if (family !== 'unclassified network device') confidence += 0.1;
-
   confidence = Math.max(0.05, Math.min(0.95, confidence));
 
   return {
@@ -571,69 +604,91 @@ function assessDeviceRisk(device, identity, allDevices) {
   const family = identity?.likelyFamily || 'unclassified network device';
   const confidence = identity?.confidence ?? 0;
 
-  if (device.isNew) {
-    addSignal(signals, 25, 'medium', 'New device', 'This device has not been acknowledged yet.');
-  }
-
-  if (trustState === 'watch') {
-    addSignal(signals, 30, 'high', 'Watch-listed', 'You marked this device for watch status.');
-  }
-
-  if (trustState === 'blocked') {
-    addSignal(signals, 45, 'critical', 'Blocked label', 'You marked this device as blocked in local inventory.');
-  }
-
-  if (trustState === 'unknown') {
-    addSignal(signals, 10, 'low', 'Unknown trust', 'This device has not been classified as trusted.');
-  }
-
-  if (!device.label) {
-    addSignal(signals, 8, 'low', 'Unlabeled device', 'No friendly name has been assigned yet.');
-  }
-
-  if (!device.hostname) {
-    addSignal(signals, 8, 'low', 'No hostname', 'Reverse DNS did not return a hostname.');
-  }
-
-  if (!device.mac) {
-    addSignal(signals, 12, 'medium', 'No MAC visible', 'The device is visible by IP but not by MAC in local inventory.');
-  }
-
-  if (kind === 'network-device' || kind === 'unknown') {
-    addSignal(signals, 10, 'low', 'Generic device type', 'The device kind is still generic.');
-  }
-
-  if (confidence < 0.45) {
-    addSignal(signals, 10, 'low', 'Low identity confidence', 'Identity resolver does not have enough clues yet.');
-  }
-
+  if (device.isNew) addSignal(signals, 25, 'medium', 'New device', 'This device has not been acknowledged yet.');
+  if (trustState === 'watch') addSignal(signals, 30, 'high', 'Watch-listed', 'You marked this device for watch status.');
+  if (trustState === 'blocked') addSignal(signals, 45, 'critical', 'Blocked label', 'You marked this device as blocked in local inventory.');
+  if (trustState === 'unknown') addSignal(signals, 10, 'low', 'Unknown trust', 'This device has not been classified as trusted.');
+  if (!device.label) addSignal(signals, 8, 'low', 'Unlabeled device', 'No friendly name has been assigned yet.');
+  if (!device.hostname) addSignal(signals, 8, 'low', 'No hostname', 'Reverse DNS did not return a hostname.');
+  if (!device.mac) addSignal(signals, 12, 'medium', 'No MAC visible', 'The device is visible by IP but not by MAC in local inventory.');
+  if (kind === 'network-device' || kind === 'unknown') addSignal(signals, 10, 'low', 'Generic device type', 'The device kind is still generic.');
+  if (confidence < 0.45) addSignal(signals, 10, 'low', 'Low identity confidence', 'Identity resolver does not have enough clues yet.');
   if ((kind === 'router/gateway' || family === 'network infrastructure') && trustState !== 'trusted') {
     addSignal(signals, 18, 'medium', 'Infrastructure not trusted', 'A router/gateway-like device should be labeled and trusted intentionally.');
   }
-
   if (/iot|camera|smart home/i.test(family) && trustState !== 'trusted') {
     addSignal(signals, 15, 'medium', 'IoT device not trusted', 'IoT-like devices should be labeled and classified.');
   }
-
   const gatewayLike = allDevices.filter((item) => item.kind === 'router/gateway');
   if (device.kind === 'router/gateway' && gatewayLike.length > 1) {
     addSignal(signals, 10, 'low', 'Multiple gateway-like devices', 'More than one gateway-like device is visible. This may be normal with mesh networks.');
   }
 
   const score = Math.min(100, signals.reduce((sum, signal) => sum + signal.score, 0));
-  return {
-    score,
-    level: riskLevel(score),
-    signals: signals.sort((a, b) => b.score - a.score),
-  };
+  return { score, level: riskLevel(score), signals: signals.sort((a, b) => b.score - a.score) };
 }
 
 function summarizeRisks(devices) {
   const summary = { critical: 0, high: 0, medium: 0, low: 0, clear: 0 };
-  for (const device of devices) {
-    summary[device.risk?.level || 'clear'] += 1;
-  }
+  for (const device of devices) summary[device.risk?.level || 'clear'] += 1;
   return summary;
+}
+
+async function buildPassiveInventory(startedAt) {
+  const interfaces = getLocalInterfaces();
+  const arpOutput = await runArp();
+  let devices = parseArpTable(arpOutput);
+
+  for (const iface of interfaces) {
+    if (!devices.some((device) => device.ip === iface.ip)) {
+      devices.push({
+        id: `local-${iface.ip}`,
+        ip: iface.ip,
+        mac: iface.mac,
+        hostname: os.hostname(),
+        vendor: null,
+        kind: 'this-host',
+        source: 'local-interface',
+        arpType: null,
+        lastSeen: new Date().toISOString(),
+      });
+    }
+  }
+
+  await enrichHostnames(devices);
+  devices = applyLabels(devices, await readLabels());
+  const historyResult = applyAndUpdateHistory(devices, await readHistory());
+  devices = historyResult.devices;
+  await writeHistory(historyResult.history);
+
+  devices = await runPool(devices, 8, async (device) => {
+    const identity = (await resolveDeviceIdentity(device)).identity;
+    const risk = assessDeviceRisk(device, identity, devices);
+    return { ...device, identity, risk };
+  });
+
+  devices.sort((a, b) => {
+    const riskDelta = (b.risk?.score ?? 0) - (a.risk?.score ?? 0);
+    if (riskDelta !== 0) return riskDelta;
+    return ipToNumber(a.ip) - ipToNumber(b.ip);
+  });
+
+  return {
+    ok: true,
+    scanMode: 'passive',
+    scannedAt: new Date().toISOString(),
+    elapsedMs: Date.now() - startedAt,
+    interfaces,
+    count: devices.length,
+    newCount: devices.filter((device) => device.isNew).length,
+    riskSummary: summarizeRisks(devices),
+    externalIdentityLookupEnabled: ENABLE_EXTERNAL_IDENTITY_LOOKUP,
+    devices,
+    safety: {
+      mode: 'passive-arp-cache',
+      note: 'Passive inventory reads local interfaces, ARP cache, labels, and DNS enrichment. No probes are sent by this endpoint.',
+    },
+  };
 }
 
 router.get('/labels', async (req, res) => {
@@ -653,21 +708,13 @@ router.post('/labels', async (req, res) => {
 
     const labels = await readLabels();
     const patch = sanitizeLabelPatch(req.body);
-
     const cleared = isClearedLabelPatch(patch);
-    if (cleared) {
-      delete labels[key];
-    } else {
-      labels[key] = patch;
-    }
-
+    if (cleared) delete labels[key];
+    else labels[key] = patch;
     await writeLabels(labels);
 
-    // MAIA append-only record of the operator classification (non-blocking).
     if (!cleared) {
-      safeAppendMemoryNode(
-        buildLabelMemoryInput(key, patch, { actor: getActor(req), route: req.originalUrl?.split('?')[0] }),
-      );
+      safeAppendMemoryNode(buildLabelMemoryInput(key, patch, { actor: getActor(req), route: req.originalUrl?.split('?')[0] }));
     }
 
     return res.json({ ok: true, key, label: labels[key] ?? null, labels });
@@ -693,10 +740,7 @@ router.post('/devices/acknowledge', async (req, res) => {
     const keys = Array.isArray(req.body?.keys)
       ? req.body.keys.map((key) => sanitizeText(key, 96)).filter(Boolean)
       : [sanitizeText(req.body?.key, 96)].filter(Boolean);
-
-    if (keys.length === 0) {
-      return res.status(400).json({ ok: false, error: 'No device keys provided' });
-    }
+    if (keys.length === 0) return res.status(400).json({ ok: false, error: 'No device keys provided' });
 
     const history = await readHistory();
     const acknowledgedAt = new Date().toISOString();
@@ -705,12 +749,7 @@ router.post('/devices/acknowledge', async (req, res) => {
 
     for (const key of keys) {
       if (!/^(mac:([0-9a-f]{2}:){5}[0-9a-f]{2}|ip:\d+\.\d+\.\d+\.\d+)$/.test(key)) continue;
-      history[key] = {
-        ...(history[key] ?? { firstSeen: acknowledgedAt, seenCount: 0 }),
-        acknowledgedAt,
-      };
-
-      // MAIA append-only record that the operator vetted this newly-seen device.
+      history[key] = { ...(history[key] ?? { firstSeen: acknowledgedAt, seenCount: 0 }), acknowledgedAt };
       safeAppendMemoryNode(buildAckMemoryInput(key, { actor, route }));
     }
 
@@ -723,74 +762,64 @@ router.post('/devices/acknowledge', async (req, res) => {
 
 router.get('/devices', async (req, res) => {
   const startedAt = Date.now();
-  const scanMode = req.query.scan === 'ping' ? 'ping' : 'passive';
-  const interfaces = getLocalInterfaces();
-
   try {
-    if (scanMode === 'ping') {
-      const targets = getScanTargets(interfaces);
-      await runPool(targets, 32, pingHost);
-    }
-
-    const arpOutput = await runArp();
-    let devices = parseArpTable(arpOutput);
-
-    for (const iface of interfaces) {
-      if (!devices.some((device) => device.ip === iface.ip)) {
-        devices.push({
-          id: `local-${iface.ip}`,
-          ip: iface.ip,
-          mac: iface.mac,
-          hostname: os.hostname(),
-          vendor: null,
-          kind: 'this-host',
-          source: 'local-interface',
-          arpType: null,
-          lastSeen: new Date().toISOString(),
-        });
-      }
-    }
-
-    await enrichHostnames(devices);
-    devices = applyLabels(devices, await readLabels());
-    const historyResult = applyAndUpdateHistory(devices, await readHistory());
-    devices = historyResult.devices;
-    await writeHistory(historyResult.history);
-
-    devices = await runPool(devices, 8, async (device) => {
-      const identity = (await resolveDeviceIdentity(device)).identity;
-      const risk = assessDeviceRisk(device, identity, devices);
-      return { ...device, identity, risk };
-    });
-
-    devices.sort((a, b) => {
-      const riskDelta = (b.risk?.score ?? 0) - (a.risk?.score ?? 0);
-      if (riskDelta !== 0) return riskDelta;
-      return ipToNumber(a.ip) - ipToNumber(b.ip);
-    });
-
-    res.json({
-      ok: true,
-      scanMode,
-      scannedAt: new Date().toISOString(),
-      elapsedMs: Date.now() - startedAt,
-      interfaces,
-      count: devices.length,
-      newCount: devices.filter((device) => device.isNew).length,
-      riskSummary: summarizeRisks(devices),
-      externalIdentityLookupEnabled: ENABLE_EXTERNAL_IDENTITY_LOOKUP,
-      devices,
-      safety: {
-        mode: scanMode === 'ping' ? 'bounded-icmp-ping-sweep' : 'passive-arp-cache',
-        note: 'Designed for networks you own or administer. No port scanning or credential probing is performed.',
-      },
-    });
+    res.json(await buildPassiveInventory(startedAt));
   } catch (error) {
     res.status(500).json({
       ok: false,
       error: error?.message ?? 'Failed to read local network inventory',
-      scanMode,
-      interfaces,
+      scanMode: 'passive',
+      interfaces: getLocalInterfaces(),
+      elapsedMs: Date.now() - startedAt,
+    });
+  }
+});
+
+router.post('/discovery/ping-sweep', async (req, res) => {
+  const startedAt = Date.now();
+
+  if (!isNetworkDiscoveryEnabled()) {
+    return res.status(403).json({
+      ok: false,
+      error: 'Network discovery is disabled. Set KESTREL_NETWORK_DISCOVERY=true to run bounded local ICMP discovery.',
+    });
+  }
+
+  try {
+    const interfaces = getLocalInterfaces();
+    const cidr = normalizeDiscoveryCidr(req.body?.cidr, interfaces);
+    const reason = sanitizeText(req.body?.reason, 240) || 'operator requested discovery';
+    const targets = buildDiscoveryTargets(cidr, DISCOVERY_MAX_TARGETS);
+    const results = await runPool(targets, DISCOVERY_CONCURRENCY, async (ip) => ({ ip, responsive: await pingHost(ip) }));
+    const alive = results.filter((result) => result?.responsive);
+    const elapsedMs = Date.now() - startedAt;
+
+    const scan = { cidr, reason, targetCount: targets.length, aliveCount: alive.length, elapsedMs };
+    safeAppendMemoryNode(buildDiscoveryMemoryInput(scan, { actor: getActor(req), route: req.originalUrl?.split('?')[0] }));
+
+    return res.json({
+      ok: true,
+      scanMode: 'ping',
+      cidr,
+      reason,
+      startedAt: new Date(startedAt).toISOString(),
+      elapsedMs,
+      targetCount: targets.length,
+      aliveCount: alive.length,
+      responsive: alive,
+      safety: {
+        mode: 'bounded-icmp-ping-sweep',
+        note: 'Operator-triggered ICMP probes only on private networks you own or administer. No port scanning, credential probing, background loop, or external-network discovery is performed.',
+        maxTargets: DISCOVERY_MAX_TARGETS,
+        concurrency: DISCOVERY_CONCURRENCY,
+        timeoutMs: DISCOVERY_PING_TIMEOUT_MS,
+      },
+    });
+  } catch (error) {
+    return res.status(400).json({
+      ok: false,
+      error: error?.message ?? 'Failed to run network discovery',
+      scanMode: 'ping',
       elapsedMs: Date.now() - startedAt,
     });
   }
