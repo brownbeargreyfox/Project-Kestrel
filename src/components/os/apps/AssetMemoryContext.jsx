@@ -9,25 +9,7 @@
 
 import React from 'react';
 import { AlertTriangle, Brain, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
-
-const KIND_LABELS = {
-  'aida.recommendation.accepted': 'Accepted',
-  'aida.recommendation.dismissed': 'Dismissed',
-  'aida.simulation.run': 'Simulation',
-  'aida.observation.insight': 'Observation',
-  'operator.note': 'Operator note',
-  'maia.correction': 'Correction',
-};
-
-function formatDate(value) {
-  if (!value) return '—';
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
-}
-
-function pct(value) {
-  return `${Math.round((Number(value) || 0) * 100)}%`;
-}
+import { kindLabel, formatMemoryDate, pct } from './maiaPresentation';
 
 export default function AssetMemoryContext({ assetId, assetName, title = 'MAIA memory for this asset' }) {
   const [open, setOpen] = React.useState(false);
@@ -86,7 +68,7 @@ export default function AssetMemoryContext({ assetId, assetName, title = 'MAIA m
       </button>
 
       {open && (
-        <div className="mt-2 rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+        <div className="mt-2 rounded-lg border border-neutral-800 bg-neutral-950 p-3" aria-live="polite" aria-busy={loading}>
           <div className="mb-2 flex items-center justify-between gap-2">
             <span className="text-[11px] text-neutral-500">
               Interpretation, not automation · {assetName || assetId}
@@ -149,10 +131,10 @@ export default function AssetMemoryContext({ assetId, assetName, title = 'MAIA m
                   data-testid="asset-maia-node"
                 >
                   <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-300">
-                    {KIND_LABELS[node.kind] || node.kind}
+                    {kindLabel(node.kind)}
                   </span>{' '}
                   <span className="text-neutral-300">{node.summary}</span>
-                  <span className="ml-1 text-neutral-600">· {formatDate(node.ts)}</span>
+                  <span className="ml-1 text-neutral-600">· {formatMemoryDate(node.ts)}</span>
                 </li>
               ))}
             </ul>
