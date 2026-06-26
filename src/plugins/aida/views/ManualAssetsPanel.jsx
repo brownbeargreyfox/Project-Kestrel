@@ -14,6 +14,7 @@ import ManualAssetAddForm from './ManualAssetAddForm';
 import ManualAssetEditor from './ManualAssetEditor';
 import ManualAssetMemoryContext from './ManualAssetMemoryContext';
 import ManualAssetSimulationPresets from './ManualAssetSimulationPresets';
+import DeviceReachabilityButton from '../../../components/os/apps/DeviceReachabilityButton';
 
 const FF_WORKFLOW_ACTIONS = import.meta.env['VITE_FF_WORKFLOW_ACTIONS'] === 'true';
 
@@ -166,6 +167,7 @@ export default function ManualAssetsPanel() {
                 </div>
                 {FF_WORKFLOW_ACTIONS && editingId === asset.id && <ManualAssetEditor asset={asset} onCancel={() => setEditingId(null)} onSaved={onSaved} />}
                 {FF_WORKFLOW_ACTIONS && <ManualAssetSimulationPresets asset={asset} onApplied={load} />}
+                <DeviceReachabilityButton ip={asset.ip} />
                 <ManualAssetMemoryContext assetId={asset.id} assetName={asset.name} />
               </li>
             ))}
