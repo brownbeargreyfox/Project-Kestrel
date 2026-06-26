@@ -7,21 +7,7 @@
 
 import React from 'react';
 import { Brain, RefreshCw } from 'lucide-react';
-
-const KIND_LABELS = {
-  'aida.recommendation.accepted': 'Accepted',
-  'aida.recommendation.dismissed': 'Dismissed',
-  'aida.simulation.run': 'Simulation',
-  'aida.observation.insight': 'Observation',
-  'operator.note': 'Operator note',
-  'maia.correction': 'Correction',
-};
-
-function formatDate(value) {
-  if (!value) return '—';
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
-}
+import { kindLabel, formatMemoryDate } from '../../../components/os/apps/maiaPresentation';
 
 export default function MAIADecisionFeed({ limit = 15 }) {
   const [nodes, setNodes] = React.useState([]);
@@ -94,11 +80,11 @@ export default function MAIADecisionFeed({ limit = 15 }) {
               <div className="flex items-start justify-between gap-2">
                 <span className="text-neutral-200">{node.summary}</span>
                 <span className="shrink-0 rounded-full border border-neutral-700 px-2 py-0.5 text-[10px] text-neutral-300">
-                  {KIND_LABELS[node.kind] || node.kind}
+                  {kindLabel(node.kind)}
                 </span>
               </div>
               <div className="mt-1 text-xs text-neutral-500">
-                {node.assetName ? `${node.assetName} · ` : ''}{node.provenance?.actor ? `${node.provenance.actor} · ` : ''}{formatDate(node.ts)}
+                {node.assetName ? `${node.assetName} · ` : ''}{node.provenance?.actor ? `${node.provenance.actor} · ` : ''}{formatMemoryDate(node.ts)}
               </div>
             </li>
           ))}
