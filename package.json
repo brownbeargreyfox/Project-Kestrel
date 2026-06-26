@@ -11,7 +11,7 @@
                     "lint":  "eslint . --ext js,jsx,ts,tsx --report-unused-disable-directives --max-warnings 0",
                     "lint:casing":  "node scripts/report-import-casing.cjs",
                     "test:manual-assets:smoke":  "node --test server/routes/manualAssets.smoke.test.js",
-                    "test:aida:manual-assets":  "node --test server/routes/manualAssets.smoke.test.js server/routes/manualAssets.maia.test.js server/lib/manualAssets.test.js server/lib/maiaMemory.test.js src/plugins/aida/views/manualAssetsPanelHelpers.test.js"
+                    "test:aida:manual-assets":  "node --test server/routes/manualAssets.smoke.test.js server/routes/manualAssets.maia.test.js server/routes/manualAssets.flag.test.js server/lib/manualAssets.test.js server/lib/maiaMemory.test.js src/plugins/aida/views/manualAssetsPanelHelpers.test.js"
                 },
     "dependencies":  {
                          "ajv":  "^8.17.1",
