@@ -163,6 +163,15 @@ function DeviceCard({ device, selected, onSelect }) {
   );
 }
 
+function toSvgCoords(svgEl, clientX, clientY) {
+  const ctm = svgEl.getScreenCTM();
+  if (!ctm) return null;
+  const pt = svgEl.createSVGPoint();
+  pt.x = clientX;
+  pt.y = clientY;
+  return pt.matrixTransform(ctm.inverse());
+}
+
 export default function NetworkTopologyApp() {
   const [inventory, setInventory] = React.useState(null);
   const [selectedIp, setSelectedIp] = React.useState(null);
@@ -177,6 +186,8 @@ export default function NetworkTopologyApp() {
   const [mapLayout, setMapLayout] = React.useState(null); // { nodes, edges, updatedAt }
   const [savingMap, setSavingMap] = React.useState(false);
   const [mapSaveMsg, setMapSaveMsg] = React.useState('');
+  const dragRef = React.useRef(null);
+  const wasDragging = React.useRef(false);
   const [saveMessage, setSaveMessage] = React.useState('');
   const [labelDraft, setLabelDraft] = React.useState('');
   const [trustDraft, setTrustDraft] = React.useState('unknown');
@@ -1007,17 +1018,47 @@ export default function NetworkTopologyApp() {
         </div>
         <div className="overflow-x-auto rounded-xl border border-neutral-800 bg-neutral-950">
           {(() => {
-            const maxX = mapNodes.length > 0 ? Math.max(...mapNodes.map((n) => n.x)) + 80 : 820;
-            const maxY = mapNodes.length > 0 ? Math.max(...mapNodes.map((n) => n.y)) + 40 : 320;
-            const vw = Math.max(820, maxX);
-            const vh = Math.max(320, maxY);
+            const PAD = 80;
+            let minX, minY, maxX, maxY;
+            if (mapNodes.length > 0) {
+              minX = Math.min(...mapNodes.map((n) => n.x)) - PAD;
+              minY = Math.min(...mapNodes.map((n) => n.y)) - PAD;
+              maxX = Math.max(...mapNodes.map((n) => n.x)) + PAD;
+              maxY = Math.max(...mapNodes.map((n) => n.y)) + PAD;
+            } else {
+              minX = 0; minY = 0; maxX = 820; maxY = 320;
+            }
+            const vw = Math.max(820, maxX - minX);
+            const vh = Math.max(320, maxY - minY);
             return (
               <svg
-                viewBox={`0 0 ${vw} ${vh}`}
+                viewBox={`${minX} ${minY} ${vw} ${vh}`}
                 xmlns="http://www.w3.org/2000/svg"
                 className="w-full min-w-[400px]"
                 style={{ maxHeight: 480 }}
                 data-testid="network-map-canvas"
+                onPointerMove={(e) => {
+                  const drag = dragRef.current;
+                  if (!drag) return;
+                  const pt = toSvgCoords(e.currentTarget, e.clientX, e.clientY);
+                  if (!pt) return;
+                  const dx = pt.x - drag.pointerOriginX;
+                  const dy = pt.y - drag.pointerOriginY;
+                  if (dx * dx + dy * dy < 9) return;
+                  wasDragging.current = true;
+                  const nx = drag.nodeOriginX + dx;
+                  const ny = drag.nodeOriginY + dy;
+                  setMapLayout((prev) => {
+                    const nodes = prev?.nodes ?? [];
+                    const exists = nodes.some((n) => n.id === drag.nodeId);
+                    const updated = exists
+                      ? nodes.map((n) => n.id === drag.nodeId ? { ...n, x: nx, y: ny, pinned: true } : n)
+                      : [...nodes, { id: drag.nodeId, deviceKey: drag.nodeId, x: nx, y: ny, pinned: true, label: drag.nodeLabel }];
+                    return { ...(prev ?? { edges: [] }), nodes: updated };
+                  });
+                }}
+                onPointerUp={() => { dragRef.current = null; }}
+                onPointerCancel={() => { dragRef.current = null; }}
               >
                 {(mapLayout?.edges ?? []).map((edge) => {
                   const src = mapNodes.find((n) => n.id === edge.sourceId);
@@ -1050,9 +1091,29 @@ export default function NetworkTopologyApp() {
                       role="button"
                       tabIndex={0}
                       aria-label={displayLabel || node.id}
-                      onClick={() => device && setSelectedIp(device.ip)}
+                      data-testid="network-map-node"
+                      onClick={() => {
+                        if (wasDragging.current) { wasDragging.current = false; return; }
+                        device && setSelectedIp(device.ip);
+                      }}
                       onKeyDown={(e) => e.key === 'Enter' && device && setSelectedIp(device.ip)}
-                      style={{ cursor: device ? 'pointer' : 'default' }}
+                      onPointerDown={(e) => {
+                        wasDragging.current = false;
+                        const svgEl = e.currentTarget.ownerSVGElement;
+                        if (!svgEl) return;
+                        const pt = toSvgCoords(svgEl, e.clientX, e.clientY);
+                        if (!pt) return;
+                        try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+                        dragRef.current = {
+                          nodeId: node.id,
+                          nodeLabel: node.label || '',
+                          pointerOriginX: pt.x,
+                          pointerOriginY: pt.y,
+                          nodeOriginX: node.x,
+                          nodeOriginY: node.y,
+                        };
+                      }}
+                      style={{ cursor: 'grab', touchAction: 'none' }}
                     >
                       <rect
                         x={-64} y={-22} width={128} height={44} rx={6}
@@ -1070,7 +1131,7 @@ export default function NetworkTopologyApp() {
                   );
                 })}
                 {devices.length === 0 && (
-                  <text x={Math.floor(vw / 2)} y={Math.floor(vh / 2)} textAnchor="middle" fill="#4b5563" fontSize={13}>
+                  <text x={minX + Math.floor(vw / 2)} y={minY + Math.floor(vh / 2)} textAnchor="middle" fill="#4b5563" fontSize={13}>
                     No devices — refresh passive inventory to populate the map.
                   </text>
                 )}
