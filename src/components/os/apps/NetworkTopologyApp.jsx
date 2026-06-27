@@ -14,6 +14,7 @@ import {
   Tags,
   Wifi,
   Brain,
+  HardDrive,
   ServerCog,
 } from 'lucide-react';
 import NetworkRiskExplainerPanel from './NetworkRiskExplainerPanel';
@@ -171,6 +172,8 @@ export default function NetworkTopologyApp() {
   const [acknowledging, setAcknowledging] = React.useState(false);
   const [error, setError] = React.useState(null);
   const [discoveryNotice, setDiscoveryNotice] = React.useState(null); // { type: 'ok'|'err', text }
+  const [enriching, setEnriching] = React.useState(false);
+  const [wmiNotice, setWmiNotice] = React.useState(null); // { type: 'ok'|'err', text }
   const [saveMessage, setSaveMessage] = React.useState('');
   const [labelDraft, setLabelDraft] = React.useState('');
   const [trustDraft, setTrustDraft] = React.useState('unknown');
@@ -361,6 +364,7 @@ export default function NetworkTopologyApp() {
   const launchApp = useUIStore((s) => s.launchApp);
 
   React.useEffect(() => { setAidaNotice(null); }, [selectedDevice?.deviceKey, selectedDevice?.ip]);
+  React.useEffect(() => { setWmiNotice(null); }, [selectedDevice?.deviceKey, selectedDevice?.ip]);
 
   const sendDeviceToAida = React.useCallback(async () => {
     if (!selectedDevice) return;
@@ -384,6 +388,42 @@ export default function NetworkTopologyApp() {
       setAidaNotice({ type: 'err', text: err?.message ?? 'Failed to send device to AIDA' });
     } finally {
       setSendingToAida(false);
+    }
+  }, [selectedDevice]);
+
+  const enrichSelected = React.useCallback(async () => {
+    if (!selectedDevice?.ip) return;
+    setEnriching(true);
+    setWmiNotice(null);
+    try {
+      const response = await fetch('/api/network/discovery/wmi', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: selectedDevice.ip, reason: 'operator requested Windows enrichment' }),
+      });
+      const payload = await response.json();
+      if (response.status === 403) {
+        throw new Error('WMI enrichment is disabled. Set KESTREL_NETWORK_DISCOVERY=true and KESTREL_WMI_DISCOVERY=true to enable.');
+      }
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || `WMI enrichment failed with HTTP ${response.status}`);
+      }
+      const facts = payload.facts ?? {};
+      const parts = [
+        facts.hostname && `Host: ${facts.hostname}`,
+        facts.osCaption && `OS: ${facts.osCaption}`,
+        facts.cpuName && `CPU: ${facts.cpuName}`,
+        typeof facts.memoryTotalGb === 'number' && `RAM: ${facts.memoryTotalGb} GB`,
+        facts.disks?.length && `Disks: ${facts.disks.map((d) => `${d.model ?? 'disk'} ${d.sizeGb ?? '?'} GB`).join(', ')}`,
+      ].filter(Boolean);
+      setWmiNotice({
+        type: 'ok',
+        text: parts.length ? parts.join(' · ') : 'Enrichment complete — no facts returned.',
+      });
+    } catch (err) {
+      setWmiNotice({ type: 'err', text: err?.message ?? 'Failed to run WMI enrichment' });
+    } finally {
+      setEnriching(false);
     }
   }, [selectedDevice]);
 
@@ -557,6 +597,19 @@ export default function NetworkTopologyApp() {
                         {sendingToAida ? 'Adding…' : 'Send to AIDA'}
                       </button>
                     )}
+                    {FF_WORKFLOW_ACTIONS && (
+                      <button
+                        type="button"
+                        onClick={enrichSelected}
+                        disabled={!selectedDevice?.ip || enriching}
+                        className="inline-flex items-center gap-2 rounded-lg border border-violet-700 bg-violet-950/70 px-3 py-2 text-sm text-violet-100 hover:bg-violet-900 disabled:opacity-50"
+                        data-testid="network-enrich-selected"
+                        title="Read Windows system facts via WMI/CIM (read-only, server process credentials)"
+                      >
+                        <HardDrive size={15} />
+                        {enriching ? 'Enriching…' : 'Enrich Selected'}
+                      </button>
+                    )}
                   </div>
                 </div>
                 {aidaNotice && (
@@ -576,6 +629,15 @@ export default function NetworkTopologyApp() {
                         Open AIDA Sentinel →
                       </button>
                     )}
+                  </div>
+                )}
+                {wmiNotice && (
+                  <div
+                    className={`mt-2 rounded-lg border p-2 text-xs ${wmiNotice.type === 'ok' ? 'border-violet-900 bg-violet-950/40 text-violet-200' : 'border-red-900 bg-red-950/40 text-red-200'}`}
+                    role={wmiNotice.type === 'err' ? 'alert' : 'status'}
+                    data-testid="network-wmi-notice"
+                  >
+                    {wmiNotice.text}
                   </div>
                 )}
                 <div className="mt-2 flex flex-wrap gap-2 text-xs">
