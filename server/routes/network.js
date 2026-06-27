@@ -18,6 +18,11 @@ const ENABLE_EXTERNAL_IDENTITY_LOOKUP = process.env.KESTREL_ENABLE_EXTERNAL_IDEN
 const DISCOVERY_MAX_TARGETS = 256;
 const DISCOVERY_CONCURRENCY = 16;
 const DISCOVERY_PING_TIMEOUT_MS = 1500;
+const MAP_LAYOUT_FILE = path.join(STATE_DIR, 'network-map-layout.json');
+const MAP_LAYOUT_MAX_NODES = 256;
+const MAP_LAYOUT_MAX_EDGES = 512;
+const MAP_CANVAS_BOUND = 10000;
+const MAP_EDGE_KINDS = new Set(['ethernet', 'wifi', 'logical', 'unknown']);
 
 const TRUST_STATES = new Set(['trusted', 'unknown', 'watch', 'blocked']);
 const DEVICE_KINDS = new Set([
@@ -145,6 +150,51 @@ async function readIdentityCache() {
 
 async function writeIdentityCache(cache) {
   return writeJsonFile(IDENTITY_CACHE_FILE, cache);
+}
+
+async function readMapLayout() {
+  const raw = await readJsonFile(MAP_LAYOUT_FILE);
+  return {
+    nodes: Array.isArray(raw?.nodes) ? raw.nodes : [],
+    edges: Array.isArray(raw?.edges) ? raw.edges : [],
+    updatedAt: raw?.updatedAt ?? null,
+  };
+}
+
+async function writeMapLayout(layout) {
+  return writeJsonFile(MAP_LAYOUT_FILE, layout);
+}
+
+function clampCanvasCoord(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(-MAP_CANVAS_BOUND, Math.min(MAP_CANVAS_BOUND, n));
+}
+
+export function sanitizeMapLayout(input) {
+  const rawNodes = Array.isArray(input?.nodes) ? input.nodes : [];
+  const rawEdges = Array.isArray(input?.edges) ? input.edges : [];
+
+  const nodes = rawNodes.slice(0, MAP_LAYOUT_MAX_NODES).map((node) => ({
+    id: sanitizeText(node?.id, 64),
+    deviceKey: sanitizeText(node?.deviceKey, 96),
+    x: clampCanvasCoord(node?.x),
+    y: clampCanvasCoord(node?.y),
+    pinned: Boolean(node?.pinned),
+    label: sanitizeText(node?.label, 128),
+  })).filter((node) => node.id);
+
+  const nodeIds = new Set(nodes.map((node) => node.id));
+
+  const edges = rawEdges.slice(0, MAP_LAYOUT_MAX_EDGES).map((edge) => ({
+    id: sanitizeText(edge?.id, 64),
+    sourceId: sanitizeText(edge?.sourceId, 64),
+    targetId: sanitizeText(edge?.targetId, 64),
+    kind: MAP_EDGE_KINDS.has(edge?.kind) ? edge.kind : 'unknown',
+    label: sanitizeText(edge?.label, 128),
+  })).filter((edge) => edge.id && nodeIds.has(edge.sourceId) && nodeIds.has(edge.targetId));
+
+  return { nodes, edges, updatedAt: new Date().toISOString() };
 }
 
 // ── MAIA memory mapping (pure, unit-tested in network.maia.test.js) ─────────────
@@ -984,6 +1034,25 @@ router.post('/discovery/wmi', async (req, res) => {
       target,
       elapsedMs: Date.now() - startedAt,
     });
+  }
+});
+
+router.get('/map-layout', async (req, res) => {
+  try {
+    const layout = await readMapLayout();
+    return res.json({ ok: true, ...layout });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message ?? 'Failed to read map layout' });
+  }
+});
+
+router.post('/map-layout', async (req, res) => {
+  try {
+    const layout = sanitizeMapLayout(req.body);
+    await writeMapLayout(layout);
+    return res.json({ ok: true, ...layout });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message ?? 'Failed to save map layout' });
   }
 });
 
