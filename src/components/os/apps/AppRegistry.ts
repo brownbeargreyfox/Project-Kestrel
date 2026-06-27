@@ -111,6 +111,16 @@ export const AppRegistry: Record<string, KestrelApp> = {
     w: 1180, h: 760,
   },
 
+  'network-map': {
+    id: 'network-map',
+    title: 'Network Map',
+    icon: Globe,
+    permissions: ['ui:window', 'events:subscribe', 'data:topology.read', 'data:metrics.read'],
+    import: () => import('./NetworkMapApp.jsx'),
+    mount: () => import('./NetworkMapApp.jsx'),
+    w: 1280, h: 820,
+  },
+
   'ai-providers': {
     id: 'ai-providers',
     title: 'AI Providers',
