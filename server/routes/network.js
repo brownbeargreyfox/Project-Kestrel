@@ -202,6 +202,121 @@ export function buildDiscoveryMemoryInput(scan, ctx = {}) {
   };
 }
 
+export function isWmiDiscoveryEnabled(env = process.env) {
+  return isNetworkDiscoveryEnabled(env) && env.KESTREL_WMI_DISCOVERY === 'true';
+}
+
+export function validateWmiTarget(target) {
+  if (typeof target !== 'string' || !target.trim()) {
+    return { ok: false, error: 'WMI target must be a non-empty string.' };
+  }
+  const t = target.trim();
+  if (t.includes('/')) {
+    return { ok: false, error: 'WMI target must be a single host, not a subnet or CIDR.' };
+  }
+  if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(t)) {
+    return { ok: false, error: 'WMI target must be a valid IPv4 address.' };
+  }
+  const octets = t.split('.').map(Number);
+  if (octets.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
+    return { ok: false, error: 'WMI target octets are out of range.' };
+  }
+  if (!isPrivateIPv4(t)) {
+    return { ok: false, error: 'WMI enrichment is limited to private RFC1918 IPv4 addresses.' };
+  }
+  return { ok: true, target: t };
+}
+
+function sanitizeWmiStr(value, maxLen = 256) {
+  if (value == null) return null;
+  const s = String(value).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '').slice(0, maxLen).trim();
+  return s || null;
+}
+
+export function parseWmiFacts(raw) {
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { return { error: 'Failed to parse WMI output.' }; }
+  if (parsed?.error) return { error: sanitizeWmiStr(parsed.error) ?? 'WMI error (no message).' };
+  return {
+    hostname: sanitizeWmiStr(parsed?.hostname),
+    domain: sanitizeWmiStr(parsed?.domain),
+    workgroup: sanitizeWmiStr(parsed?.workgroup),
+    osCaption: sanitizeWmiStr(parsed?.osCaption),
+    osVersion: sanitizeWmiStr(parsed?.osVersion),
+    osBuildNumber: sanitizeWmiStr(parsed?.osBuildNumber),
+    manufacturer: sanitizeWmiStr(parsed?.manufacturer),
+    model: sanitizeWmiStr(parsed?.model),
+    cpuName: sanitizeWmiStr(parsed?.cpuName),
+    memoryTotalGb: typeof parsed?.memoryTotalGb === 'number' ? parsed.memoryTotalGb : null,
+    uptimeSeconds: typeof parsed?.uptimeSeconds === 'number' ? parsed.uptimeSeconds : null,
+    ipv4Addresses: Array.isArray(parsed?.ipv4Addresses)
+      ? parsed.ipv4Addresses.map((v) => sanitizeWmiStr(v)).filter(Boolean)
+      : [],
+    disks: Array.isArray(parsed?.disks)
+      ? parsed.disks.map((d) => ({
+          model: sanitizeWmiStr(d?.model),
+          sizeGb: typeof d?.sizeGb === 'number' ? d.sizeGb : null,
+        }))
+      : [],
+  };
+}
+
+export function buildWmiMemoryInput(stat, ctx = {}) {
+  const reason = sanitizeText(stat?.reason, 240);
+  return {
+    kind: 'operator.note',
+    source: 'operator',
+    assetId: `network:${stat.target}`,
+    assetName: stat.target,
+    summary: `Ran single-host WMI/CIM enrichment for ${stat.target}.`,
+    detail: [`ElapsedMs: ${stat.elapsedMs}`, reason ? `Reason: ${reason}` : null].filter(Boolean).join('\n'),
+    tags: ['network', 'wmi', 'enrichment', 'operator-triggered'],
+    confidence: { value: 0.9, basis: 'Operator-triggered read-only WMI/CIM enrichment.', lowCoverage: false },
+    provenance: { route: ctx.route, actor: ctx.actor, sourceEventType: 'network.wmi.enrichment' },
+  };
+}
+
+// target has been validated as a pure private IPv4 (digits and dots only) before this call
+async function runWmiEnrichment(target, timeoutMs = 10_000) {
+  const script = `$ErrorActionPreference = 'SilentlyContinue'
+$opts = @{ ComputerName = '${target}'; ErrorAction = 'SilentlyContinue' }
+$cs  = Get-CimInstance Win32_ComputerSystem @opts
+$os  = Get-CimInstance Win32_OperatingSystem @opts
+$cpu = Get-CimInstance Win32_Processor @opts | Select-Object -First 1
+$mem = (Get-CimInstance Win32_PhysicalMemory @opts | Measure-Object -Property Capacity -Sum).Sum
+$nd  = Get-CimInstance Win32_NetworkAdapterConfiguration @opts | Where-Object { $_.IPEnabled }
+$dsk = Get-CimInstance Win32_DiskDrive @opts | Select-Object Model, Size
+$ips = @($nd | ForEach-Object { $_.IPAddress } | Where-Object { $_ -match '^\\d+\\.\\d+\\.\\d+\\.\\d+$' })
+$up  = if ($os.LastBootUpTime) { [math]::Round(([datetime]::Now - $os.LastBootUpTime).TotalSeconds) } else { $null }
+ConvertTo-Json @{
+  hostname      = $cs.DNSHostName
+  domain        = if ($cs.PartOfDomain) { $cs.Domain } else { $null }
+  workgroup     = if (-not $cs.PartOfDomain) { $cs.Workgroup } else { $null }
+  osCaption     = $os.Caption
+  osVersion     = $os.Version
+  osBuildNumber = $os.BuildNumber
+  manufacturer  = $cs.Manufacturer
+  model         = $cs.Model
+  cpuName       = $cpu.Name
+  memoryTotalGb = if ($mem) { [math]::Round($mem / 1GB, 2) } else { $null }
+  uptimeSeconds = $up
+  ipv4Addresses = $ips
+  disks         = @($dsk | ForEach-Object { @{ model = $_.Model; sizeGb = if ($_.Size) { [math]::Round($_.Size / 1GB, 0) } else { $null } } })
+} -Depth 3`;
+
+  try {
+    const { stdout } = await execFileAsync(
+      'powershell',
+      ['-NonInteractive', '-NoProfile', '-NoLogo', '-Command', script],
+      { timeout: timeoutMs, windowsHide: true },
+    );
+    return stdout.trim();
+  } catch (err) {
+    if (err?.stdout?.trim()) return err.stdout.trim();
+    return JSON.stringify({ error: err?.message ?? 'PowerShell did not produce output.' });
+  }
+}
+
 function applyLabels(devices, labels) {
   return devices.map((device) => {
     const deviceKey = getDeviceKey(device);
@@ -820,6 +935,53 @@ router.post('/discovery/ping-sweep', async (req, res) => {
       ok: false,
       error: error?.message ?? 'Failed to run network discovery',
       scanMode: 'ping',
+      elapsedMs: Date.now() - startedAt,
+    });
+  }
+});
+
+router.post('/discovery/wmi', async (req, res) => {
+  const startedAt = Date.now();
+
+  if (!isWmiDiscoveryEnabled()) {
+    return res.status(403).json({
+      ok: false,
+      error: 'WMI enrichment is disabled. Set KESTREL_NETWORK_DISCOVERY=true and KESTREL_WMI_DISCOVERY=true to enable.',
+    });
+  }
+
+  const validation = validateWmiTarget(req.body?.target);
+  if (!validation.ok) {
+    return res.status(400).json({ ok: false, error: validation.error });
+  }
+  const { target } = validation;
+
+  try {
+    const reason = sanitizeText(req.body?.reason, 240) || 'operator requested enrichment';
+    const stdout = await runWmiEnrichment(target, 12_000);
+    const facts = parseWmiFacts(stdout);
+    const elapsedMs = Date.now() - startedAt;
+
+    safeAppendMemoryNode(buildWmiMemoryInput(
+      { target, reason, elapsedMs },
+      { actor: getActor(req), route: req.originalUrl?.split('?')[0] },
+    ));
+
+    return res.json({
+      ok: true,
+      target,
+      elapsedMs,
+      facts,
+      safety: {
+        mode: 'single-host-wmi-read-only',
+        note: 'Read-only WMI/CIM enrichment using server process credentials. No ports scanned, no credentials stored, no subnet enumeration.',
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: error?.message ?? 'Failed to run WMI enrichment',
+      target,
       elapsedMs: Date.now() - startedAt,
     });
   }
