@@ -4,8 +4,11 @@
 // Launched via launchApp('network-map') from the Network Inventory header.
 
 import React from 'react';
-import { Globe, RefreshCw, Save } from 'lucide-react';
+import { Globe, RefreshCw, Save, Brain, ShieldAlert } from 'lucide-react';
 import NetworkMapEdgeList from './NetworkMapEdgeList';
+import { useUIStore } from '../../../store/useUIStore';
+
+const FF_WORKFLOW_ACTIONS = import.meta.env['VITE_FF_WORKFLOW_ACTIONS'] === 'true';
 
 function formatDeviceName(device) {
   return device.displayName || device.label || device.hostname || device.mac || device.ip;
@@ -33,6 +36,9 @@ export default function NetworkMapApp() {
   const [linkMode, setLinkMode] = React.useState(false);
   const [linkSource, setLinkSource] = React.useState(null); // nodeId of pending source
   const [linkMsg, setLinkMsg] = React.useState('');
+  const [sendingToAida, setSendingToAida] = React.useState(false);
+  const [aidaNotice, setAidaNotice] = React.useState(null); // { type: 'ok' | 'err', text }
+  const launchApp = useUIStore((s) => s.launchApp);
 
   const loadDevices = React.useCallback(async () => {
     setLoading(true);
@@ -161,6 +167,61 @@ export default function NetworkMapApp() {
   // the row vanish from the list.
   const manualEdges = (mapLayout?.edges ?? []).filter((e) => typeof e.id === 'string' && e.id.startsWith('logical:'));
 
+  // Explicit, operator-triggered handoff. Sends only node ids/keys/labels and
+  // edge metadata — never raw device objects or IPs not already in a label.
+  const sendMapToAida = React.useCallback(async () => {
+    setSendingToAida(true);
+    setAidaNotice(null);
+    try {
+      const asset = {
+        id: 'manual:network-map',
+        name: 'Network Map',
+        type: 'network-map',
+        os: '',
+        datacenter: 'home-lab',
+        tier: 'management',
+        criticality: 'medium',
+        status: 'online',
+        metrics: {
+          cpuUsage: 10,
+          memoryUsage: 20,
+          diskUsage: 40,
+          networkLatency: 5,
+          storageIO: mapNodes.length,
+          connections: manualEdges.length,
+        },
+        currentIncident: {
+          title: 'Manual network map snapshot',
+          severity: manualEdges.length > 0 ? 'medium' : 'low',
+          summary: `${mapNodes.length} nodes, ${manualEdges.length} manual edges`,
+          mapPayload: {
+            nodes: mapNodes.map(({ id, deviceKey, x, y, pinned, label }) => ({ id, deviceKey, x, y, pinned, label })),
+            edges: manualEdges.map(({ id, sourceId, targetId, kind, label }) => ({ id, sourceId, targetId, kind, label })),
+            generatedAt: new Date().toISOString(),
+            source: 'network-map',
+          },
+        },
+      };
+      const response = await fetch('/api/aida/assets/manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(asset),
+      });
+      const payload = await response.json();
+      if (response.status === 403) {
+        throw new Error('Manual asset actions are disabled. Enable the workflow-actions flag to add to AIDA.');
+      }
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || `Send to AIDA failed with HTTP ${response.status}`);
+      }
+      setAidaNotice({ type: 'ok', text: 'Added Network Map to AIDA assets. Open AIDA Sentinel to observe or simulate it.' });
+    } catch (err) {
+      setAidaNotice({ type: 'err', text: err?.message ?? 'Failed to send map to AIDA.' });
+    } finally {
+      setSendingToAida(false);
+    }
+  }, [mapNodes, manualEdges]);
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-neutral-950 text-neutral-100" data-testid="network-map-app">
       <header className="border-b border-neutral-800 p-4">
@@ -215,8 +276,45 @@ export default function NetworkMapApp() {
               <Save size={14} />
               {savingMap ? 'Saving…' : 'Save Map'}
             </button>
+            {FF_WORKFLOW_ACTIONS && (
+              <button
+                type="button"
+                onClick={sendMapToAida}
+                disabled={sendingToAida || mapNodes.length === 0}
+                className="inline-flex items-center gap-2 rounded-lg border border-violet-700 bg-violet-950/60 px-3 py-1.5 text-sm text-violet-200 hover:bg-violet-900/60 disabled:opacity-50"
+                data-testid="network-map-send-to-aida"
+                title="Send the current map snapshot to AIDA as a manual asset"
+              >
+                <Brain size={14} />
+                {sendingToAida ? 'Sending…' : 'Send Map to AIDA'}
+              </button>
+            )}
           </div>
         </div>
+        {aidaNotice && (
+          <div
+            role={aidaNotice.type === 'ok' ? 'status' : 'alert'}
+            className={`mt-3 flex flex-wrap items-center gap-3 rounded-lg border px-3 py-2 text-sm ${
+              aidaNotice.type === 'ok'
+                ? 'border-emerald-800 bg-emerald-950/60 text-emerald-200'
+                : 'border-red-800 bg-red-950/60 text-red-200'
+            }`}
+            data-testid="network-map-aida-notice"
+          >
+            {aidaNotice.type === 'ok' ? <Brain size={14} /> : <ShieldAlert size={14} />}
+            <span className="min-w-0 flex-1">{aidaNotice.text}</span>
+            {aidaNotice.type === 'ok' && (
+              <button
+                type="button"
+                onClick={() => launchApp('aida-sentinel')}
+                className="shrink-0 rounded-lg border border-emerald-700 bg-emerald-900/60 px-2.5 py-1 text-xs text-emerald-100 hover:bg-emerald-800/60"
+                data-testid="network-map-open-aida-sentinel"
+              >
+                Open AIDA Sentinel
+              </button>
+            )}
+          </div>
+        )}
       </header>
 
       <div className="min-h-0 flex-1 overflow-auto p-4">
