@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { Globe, RefreshCw, Save } from 'lucide-react';
+import NetworkMapEdgeList from './NetworkMapEdgeList';
 
 function formatDeviceName(device) {
   return device.displayName || device.label || device.hostname || device.mac || device.ip;
@@ -141,7 +142,24 @@ export default function NetworkMapApp() {
     setLinkSource(null);
   }, [linkSource, mapLayout?.edges]);
 
-  const logicalEdges = (mapLayout?.edges ?? []).filter((e) => e.kind === 'logical');
+  const onUpdateEdge = React.useCallback((edgeId, patch) => {
+    setMapLayout((prev) => ({
+      ...(prev ?? { nodes: [] }),
+      edges: (prev?.edges ?? []).map((e) => (e.id === edgeId ? { ...e, ...patch } : e)),
+    }));
+  }, []);
+
+  const onDeleteEdge = React.useCallback((edgeId) => {
+    setMapLayout((prev) => ({
+      ...(prev ?? { nodes: [] }),
+      edges: (prev?.edges ?? []).filter((e) => e.id !== edgeId),
+    }));
+  }, []);
+
+  // Manual edges are identified by their stable `logical:` id namespace (set at
+  // creation), not by their `kind` — kind is now user-editable and must not make
+  // the row vanish from the list.
+  const manualEdges = (mapLayout?.edges ?? []).filter((e) => typeof e.id === 'string' && e.id.startsWith('logical:'));
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-neutral-950 text-neutral-100" data-testid="network-map-app">
@@ -167,6 +185,7 @@ export default function NetworkMapApp() {
             )}
             <button
               type="button"
+              aria-pressed={linkMode}
               onClick={() => { setLinkMode((m) => !m); setLinkSource(null); setLinkMsg(''); }}
               className={`inline-flex items-center rounded-lg border px-3 py-1.5 text-sm ${
                 linkMode
@@ -336,40 +355,12 @@ export default function NetworkMapApp() {
         </div>
       </div>
 
-      {logicalEdges.length > 0 && (
-        <div className="max-h-40 overflow-y-auto border-t border-neutral-800 p-3" data-testid="network-map-edge-list">
-          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-            Manual Edges ({logicalEdges.length})
-          </div>
-          <div className="flex flex-col gap-1">
-            {logicalEdges.map((edge) => {
-              const srcNode = mapNodes.find((n) => n.id === edge.sourceId);
-              const tgtNode = mapNodes.find((n) => n.id === edge.targetId);
-              const srcLabel = (srcNode?.label || edge.sourceId).slice(0, 24);
-              const tgtLabel = (tgtNode?.label || edge.targetId).slice(0, 24);
-              return (
-                <div key={edge.id} className="flex items-center justify-between gap-3 rounded-lg bg-neutral-900 px-3 py-1.5">
-                  <span className="min-w-0 truncate text-xs text-neutral-300">
-                    {srcLabel} <span className="text-neutral-500">→</span> {tgtLabel}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setMapLayout((prev) => ({
-                      ...(prev ?? { nodes: [] }),
-                      edges: (prev?.edges ?? []).filter((e) => e.id !== edge.id),
-                    }))}
-                    className="shrink-0 text-xs text-red-400 hover:text-red-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-400 focus-visible:ring-offset-1 focus-visible:ring-offset-neutral-900"
-                    data-testid="network-map-edge-delete"
-                    aria-label={`Delete edge from ${srcLabel} to ${tgtLabel}`}
-                  >
-                    Delete
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      <NetworkMapEdgeList
+        edges={manualEdges}
+        mapNodes={mapNodes}
+        onDeleteEdge={onDeleteEdge}
+        onUpdateEdge={onUpdateEdge}
+      />
     </div>
   );
 }
