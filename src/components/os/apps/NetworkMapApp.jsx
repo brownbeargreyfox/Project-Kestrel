@@ -29,6 +29,9 @@ export default function NetworkMapApp() {
   const [selectedIp, setSelectedIp] = React.useState(null);
   const dragRef = React.useRef(null);
   const wasDragging = React.useRef(false);
+  const [linkMode, setLinkMode] = React.useState(false);
+  const [linkSource, setLinkSource] = React.useState(null); // nodeId of pending source
+  const [linkMsg, setLinkMsg] = React.useState('');
 
   const loadDevices = React.useCallback(async () => {
     setLoading(true);
@@ -102,6 +105,44 @@ export default function NetworkMapApp() {
     }
   }, [mapLayout, mapNodes]);
 
+  // handleLinkClick: first call sets source, second call creates the edge (or reports error).
+  // Duplicate check reads from mapLayout.edges in the closure (current render's committed state).
+  const handleLinkClick = React.useCallback((nodeId) => {
+    setLinkMsg('');
+    if (!linkSource) {
+      setLinkSource(nodeId);
+      return;
+    }
+    if (linkSource === nodeId) {
+      setLinkMsg('Cannot link a node to itself.');
+      setLinkSource(null);
+      return;
+    }
+    const sourceId = linkSource;
+    const targetId = nodeId;
+    const currentEdges = mapLayout?.edges ?? [];
+    const isDuplicate = currentEdges.some(
+      (e) =>
+        (e.sourceId === sourceId && e.targetId === targetId) ||
+        (e.sourceId === targetId && e.targetId === sourceId),
+    );
+    if (isDuplicate) {
+      setLinkMsg('Edge already exists between these nodes.');
+      setLinkSource(null);
+      return;
+    }
+    setMapLayout((prev) => ({
+      ...(prev ?? { nodes: [] }),
+      edges: [
+        ...(prev?.edges ?? []),
+        { id: `logical:${sourceId}:${targetId}`, sourceId, targetId, kind: 'logical', label: 'manual' },
+      ],
+    }));
+    setLinkSource(null);
+  }, [linkSource, mapLayout?.edges]);
+
+  const logicalEdges = (mapLayout?.edges ?? []).filter((e) => e.kind === 'logical');
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-neutral-950 text-neutral-100" data-testid="network-map-app">
       <header className="border-b border-neutral-800 p-4">
@@ -115,9 +156,27 @@ export default function NetworkMapApp() {
               </span>
             )}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             {error && <span className="text-xs text-red-400">{error}</span>}
             {mapSaveMsg && <span className="text-xs text-neutral-400">{mapSaveMsg}</span>}
+            {linkMsg && <span className="text-xs text-amber-400">{linkMsg}</span>}
+            {linkMode && !linkMsg && (
+              <span className="text-xs text-neutral-500">
+                {linkSource ? 'click target node' : 'click source node'}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => { setLinkMode((m) => !m); setLinkSource(null); setLinkMsg(''); }}
+              className={`inline-flex items-center rounded-lg border px-3 py-1.5 text-sm ${
+                linkMode
+                  ? 'border-amber-600 bg-amber-950/60 text-amber-200 hover:bg-amber-900/60'
+                  : 'border-neutral-700 bg-neutral-900 hover:bg-neutral-800'
+              }`}
+              data-testid="network-map-link-mode"
+            >
+              {linkMode ? 'Exit Link Mode' : 'Link Mode'}
+            </button>
             <button
               type="button"
               onClick={loadDevices}
@@ -186,6 +245,7 @@ export default function NetworkMapApp() {
                 onPointerUp={() => { dragRef.current = null; }}
                 onPointerCancel={() => { dragRef.current = null; }}
               >
+                {/* Edges drawn before nodes so nodes render on top */}
                 {(mapLayout?.edges ?? []).map((edge) => {
                   const src = mapNodes.find((n) => n.id === edge.sourceId);
                   const tgt = mapNodes.find((n) => n.id === edge.targetId);
@@ -202,12 +262,16 @@ export default function NetworkMapApp() {
                 {mapNodes.map((node) => {
                   const device = devices.find((d) => d.deviceKey === node.deviceKey);
                   const riskLevel = device?.risk?.level;
-                  const stroke = riskLevel === 'critical' ? '#dc2626'
+                  const riskStroke = riskLevel === 'critical' ? '#dc2626'
                     : riskLevel === 'high' ? '#ea580c'
                     : riskLevel === 'medium' ? '#d97706'
                     : riskLevel === 'low' ? '#0284c7'
                     : '#059669';
-                  const isSelected = device?.ip === selectedIp;
+                  const isLinkSrc = linkMode && node.id === linkSource;
+                  const showSelected = !linkMode && device?.ip === selectedIp;
+                  const nodeStroke = isLinkSrc ? '#f59e0b' : showSelected ? '#38bdf8' : riskStroke;
+                  const nodeFill = isLinkSrc ? '#1c1400' : showSelected ? '#0c2240' : '#0d0d0d';
+                  const strokeW = (isLinkSrc || showSelected) ? 2 : 1.5;
                   const displayLabel = (node.label || device?.displayName || '').slice(0, 22);
                   const ipLabel = (device?.ip || node.id.replace(/^(mac:|ip:)/, '')).slice(0, 22);
                   return (
@@ -220,9 +284,14 @@ export default function NetworkMapApp() {
                       data-testid="network-map-node"
                       onClick={() => {
                         if (wasDragging.current) { wasDragging.current = false; return; }
+                        if (linkMode) { handleLinkClick(node.id); return; }
                         device && setSelectedIp((prev) => prev === device.ip ? null : device.ip);
                       }}
-                      onKeyDown={(e) => e.key === 'Enter' && device && setSelectedIp((prev) => prev === device.ip ? null : device.ip)}
+                      onKeyDown={(e) => {
+                        if (e.key !== 'Enter') return;
+                        if (linkMode) { handleLinkClick(node.id); return; }
+                        device && setSelectedIp((prev) => prev === device.ip ? null : device.ip);
+                      }}
                       onPointerDown={(e) => {
                         wasDragging.current = false;
                         const svgEl = e.currentTarget.ownerSVGElement;
@@ -239,13 +308,13 @@ export default function NetworkMapApp() {
                           nodeOriginY: node.y,
                         };
                       }}
-                      style={{ cursor: 'grab', touchAction: 'none' }}
+                      style={{ cursor: linkMode ? 'crosshair' : 'grab', touchAction: 'none' }}
                     >
                       <rect
                         x={-64} y={-22} width={128} height={44} rx={6}
-                        fill={isSelected ? '#0c2240' : '#0d0d0d'}
-                        stroke={isSelected ? '#38bdf8' : stroke}
-                        strokeWidth={isSelected ? 2 : 1.5}
+                        fill={nodeFill}
+                        stroke={nodeStroke}
+                        strokeWidth={strokeW}
                       />
                       <text x={0} y={-5} textAnchor="middle" fill="#f3f4f6" fontSize={11} fontWeight={600}>
                         {displayLabel}
@@ -266,6 +335,41 @@ export default function NetworkMapApp() {
           })()}
         </div>
       </div>
+
+      {logicalEdges.length > 0 && (
+        <div className="max-h-40 overflow-y-auto border-t border-neutral-800 p-3" data-testid="network-map-edge-list">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+            Manual Edges ({logicalEdges.length})
+          </div>
+          <div className="flex flex-col gap-1">
+            {logicalEdges.map((edge) => {
+              const srcNode = mapNodes.find((n) => n.id === edge.sourceId);
+              const tgtNode = mapNodes.find((n) => n.id === edge.targetId);
+              const srcLabel = (srcNode?.label || edge.sourceId).slice(0, 24);
+              const tgtLabel = (tgtNode?.label || edge.targetId).slice(0, 24);
+              return (
+                <div key={edge.id} className="flex items-center justify-between gap-3 rounded-lg bg-neutral-900 px-3 py-1.5">
+                  <span className="min-w-0 truncate text-xs text-neutral-300">
+                    {srcLabel} <span className="text-neutral-500">→</span> {tgtLabel}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setMapLayout((prev) => ({
+                      ...(prev ?? { nodes: [] }),
+                      edges: (prev?.edges ?? []).filter((e) => e.id !== edge.id),
+                    }))}
+                    className="shrink-0 text-xs text-red-400 hover:text-red-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-400 focus-visible:ring-offset-1 focus-visible:ring-offset-neutral-900"
+                    data-testid="network-map-edge-delete"
+                    aria-label={`Delete edge from ${srcLabel} to ${tgtLabel}`}
+                  >
+                    Delete
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
